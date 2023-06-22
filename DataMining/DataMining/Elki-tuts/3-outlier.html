@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html>
+<head>
+ <meta charset="utf-8">
+ <title>Implementing Outlier Detection</title>
+ <meta name="description" content="Open-Source Data Mining with Java.">
+ <meta http-equiv="X-UA-Compatible" content="IE=edge">
+ <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/css/main.css">
+<link href="//fonts.googleapis.com/css?family=Inconsolata%7CSource+Sans+Pro" rel="stylesheet">
+<link rel="canonical" href="http://elki-project.github.io/tutorial/outlier">
+<link rel="shortcut icon" href="/img/favicon.png" type="image/png">
+<link rel="stylesheet" type="text/css" href="//cdnjs.cloudflare.com/ajax/libs/cookieconsent2/3.0.3/cookieconsent.min.css" />
+  <script src="//cdnjs.cloudflare.com/ajax/libs/cookieconsent2/3.0.3/cookieconsent.min.js"></script>
+  <script>window["denyCookies"]=function(b){window["ga-disable-UA-87792924-1"]=b;}
+window.addEventListener("load",function(){window.cookieconsent.initialise({palette:{popup:{background:"#edeff5",text:"#838391"},button:{background:"#4b81e8"}},theme:"classic",type:"opt-out",content:{message:"This website uses Google Analytics cookies to ensure you get the best experience on our website, and is hosted on GitHub servers outside of our control.",link:"GitHub privacy statement",href:"https://help.github.com/articles/github-privacy-statement/",deny:"Disable Google Analytics"},onInitialise:function(status){window.denyCookies(!this.hasConsented());},onStatusChange:function(status,chosenBefore){window.denyCookies(!this.hasConsented());}})});</script>
+</head>
+<body>
+<div class="content">
+ <article class="post">
+<h1 id="implementing-a-new-outlier-detection-method">Implementing a new outlier detection method</h1>
+<p class="versioninfo">Version information: Updated for ELKI 0.6.5~20141030</p>
+<p>In this tutorial, we want to implement a new outlier detection method. The outlier definition used in this example is to use the standard deviation of the distances to the k nearest neighbors. Inliers are expected to have a low standard deviation, outliers to have a higher standard deviation (note: in reality, it probably is not that easy, but this is good enough for this tutorial).</p>
+<p>The two key APIs in ELKI are the <a href="/releases/current/doc/de/lmu/ifi/dbs/elki/algorithm/Algorithm.html">Algorithm</a> interface (and the associated abstract classes and specializations) and the <a href="/releases/current/doc/de/lmu/ifi/dbs/elki/result/outlier/OutlierResult.html">OutlierResult</a> classes for output.</p>
+<h2 id="the-auto-generated-code">The auto-generated code</h2>
+<p>Again we start with a stub class. As base class we chose <a href="/releases/current/doc/de/lmu/ifi/dbs/elki/algorithm/AbstractDistanceBasedAlgorithm.html">AbstractDistanceBasedAlgorithm</a>, and implementing the <a href="/releases/current/doc/de/lmu/ifi/dbs/elki/algorithm/outlier/OutlierAlgorithm.html">OutlierAlgorithm</a> interface forces us to use the result type <a href="/releases/current/doc/de/lmu/ifi/dbs/elki/result/outlier/OutlierResult.html">OutlierResult</a>. The full stub looks like this:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java"><span class="kn">package</span> <span class="nn">tutorial.outlier</span><span class="o">;</span>
+
+<span class="kn">import</span> <span class="nn">de.lmu.ifi.dbs.elki.algorithm.AbstractDistanceBasedAlgorithm</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">de.lmu.ifi.dbs.elki.algorithm.outlier.OutlierAlgorithm</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">de.lmu.ifi.dbs.elki.data.type.TypeInformation</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">de.lmu.ifi.dbs.elki.database.Database</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">de.lmu.ifi.dbs.elki.distance.distancefunction.DistanceFunction</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">de.lmu.ifi.dbs.elki.logging.Logging</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">de.lmu.ifi.dbs.elki.result.outlier.OutlierResult</span><span class="o">;</span>
+
+<span class="kd">public</span> <span class="kd">class</span> <span class="nc">DistanceStddevOutlier</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span>
+    <span class="kd">extends</span> <span class="nc">AbstractDistanceBasedAlgorithm</span><span class="o">&lt;</span><span class="no">O</span><span class="o">,</span> <span class="nc">OutlierResult</span><span class="o">&gt;</span>
+    <span class="kd">implements</span> <span class="nc">OutlierAlgorithm</span> <span class="o">{</span>
+  <span class="kd">protected</span> <span class="nf">DistanceStddevOutlier</span><span class="o">(</span><span class="nc">DistanceFunction</span><span class="o">&lt;?</span> <span class="kd">super</span> <span class="no">O</span><span class="o">&gt;</span> <span class="n">distanceFunction</span><span class="o">)</span> <span class="o">{</span>
+    <span class="kd">super</span><span class="o">(</span><span class="n">distanceFunction</span><span class="o">);</span>
+  <span class="o">}</span>
+
+  <span class="nd">@Override</span>
+  <span class="kd">public</span> <span class="nc">OutlierResult</span> <span class="nf">run</span><span class="o">(</span><span class="nc">Database</span> <span class="n">database</span><span class="o">)</span> <span class="o">{</span>
+    <span class="c1">// TODO Auto-generated method stub</span>
+    <span class="k">return</span> <span class="kc">null</span><span class="o">;</span>
+  <span class="o">}</span>
+
+  <span class="nd">@Override</span>
+  <span class="kd">public</span> <span class="nc">TypeInformation</span><span class="o">[]</span> <span class="nf">getInputTypeRestriction</span><span class="o">()</span> <span class="o">{</span>
+    <span class="c1">// TODO Auto-generated method stub</span>
+    <span class="k">return</span> <span class="kc">null</span><span class="o">;</span>
+  <span class="o">}</span>
+
+  <span class="nd">@Override</span>
+  <span class="kd">protected</span> <span class="nc">Logging</span> <span class="nf">getLogger</span><span class="o">()</span> <span class="o">{</span>
+    <span class="c1">// TODO Auto-generated method stub</span>
+    <span class="k">return</span> <span class="kc">null</span><span class="o">;</span>
+  <span class="o">}</span>
+<span class="o">}</span></code></pre></figure>
+<p>(Note: you <strong>may</strong> be missing the <code class="language-plaintext highlighter-rouge">run</code> method. See below.)</p>
+<h2 id="completing-the-stub">Completing the stub</h2>
+<p>We have two generics in this example. <code class="language-plaintext highlighter-rouge">O</code> is the object type. Since this is dependant on the distance function, we cannot make many assumptions. We just need to have a type variable and use it consistently. We will also add a class logger and fill out the <code class="language-plaintext highlighter-rouge">getInputTypeRestriction</code> method (which again is determined by the distance function and the <code class="language-plaintext highlighter-rouge">k</code> parameter, for the number of neighbors. We also made the constructor <code class="language-plaintext highlighter-rouge">public</code>.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java"><span class="kn">package</span> <span class="nn">tutorial.outlier</span><span class="o">;</span>
+
+<span class="kn">import</span> <span class="nn">de.lmu.ifi.dbs.elki.algorithm.AbstractDistanceBasedAlgorithm</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">de.lmu.ifi.dbs.elki.algorithm.outlier.OutlierAlgorithm</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">de.lmu.ifi.dbs.elki.data.type.TypeInformation</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">de.lmu.ifi.dbs.elki.data.type.TypeUtil</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">de.lmu.ifi.dbs.elki.distance.distancefunction.DistanceFunction</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">de.lmu.ifi.dbs.elki.logging.Logging</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">de.lmu.ifi.dbs.elki.result.outlier.OutlierResult</span><span class="o">;</span>
+
+<span class="kd">public</span> <span class="kd">class</span> <span class="nc">DistanceStddevOutlier</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span>
+    <span class="kd">extends</span> <span class="nc">AbstractDistanceBasedAlgorithm</span><span class="o">&lt;</span><span class="no">O</span><span class="o">,</span> <span class="nc">OutlierResult</span><span class="o">&gt;</span>
+    <span class="kd">implements</span> <span class="nc">OutlierAlgorithm</span> <span class="o">{</span>
+  <span class="cm">/**
+   * Class logger
+   */</span>
+  <span class="kd">private</span> <span class="kd">static</span> <span class="kd">final</span> <span class="nc">Logging</span> <span class="n">logger</span> <span class="o">=</span> <span class="nc">Logging</span><span class="o">.</span><span class="na">getLogger</span><span class="o">(</span><span class="nc">DistanceStddevOutlier</span><span class="o">.</span><span class="na">class</span><span class="o">);</span>
+
+  <span class="cm">/**
+   * Number of neighbors to get.
+   */</span>
+  <span class="kd">protected</span> <span class="kt">int</span> <span class="n">k</span><span class="o">;</span>
+
+  <span class="cm">/**
+   * Constructor.
+   * 
+   * @param distanceFunction Distance function to use
+   * @param k Number of neighbors to use
+   */</span>
+  <span class="kd">public</span> <span class="nf">DistanceStddevOutlier</span><span class="o">(</span><span class="nc">DistanceFunction</span><span class="o">&lt;?</span> <span class="kd">super</span> <span class="no">O</span><span class="o">&gt;</span> <span class="n">distanceFunction</span><span class="o">,</span> <span class="kt">int</span> <span class="n">k</span><span class="o">)</span> <span class="o">{</span>
+    <span class="kd">super</span><span class="o">(</span><span class="n">distanceFunction</span><span class="o">);</span>
+    <span class="k">this</span><span class="o">.</span><span class="na">k</span> <span class="o">=</span> <span class="n">k</span><span class="o">;</span>
+  <span class="o">}</span>
+
+  <span class="nd">@Override</span>
+  <span class="kd">public</span> <span class="nc">OutlierResult</span> <span class="nf">run</span><span class="o">(</span><span class="nc">Database</span> <span class="n">database</span><span class="o">)</span> <span class="o">{</span>
+    <span class="c1">// TODO Auto-generated method stub</span>
+    <span class="k">return</span> <span class="kc">null</span><span class="o">;</span>
+  <span class="o">}</span>
+
+  <span class="nd">@Override</span>
+  <span class="kd">public</span> <span class="nc">TypeInformation</span><span class="o">[]</span> <span class="nf">getInputTypeRestriction</span><span class="o">()</span> <span class="o">{</span>
+    <span class="k">return</span> <span class="nc">TypeUtil</span><span class="o">.</span><span class="na">array</span><span class="o">(</span><span class="n">getDistanceFunction</span><span class="o">().</span><span class="na">getInputTypeRestriction</span><span class="o">());</span>
+  <span class="o">}</span>
+
+  <span class="nd">@Override</span>
+  <span class="kd">protected</span> <span class="nc">Logging</span> <span class="nf">getLogger</span><span class="o">()</span> <span class="o">{</span>
+    <span class="k">return</span> <span class="n">logger</span><span class="o">;</span>
+  <span class="o">}</span>
+<span class="o">}</span></code></pre></figure>
+<h2 id="adding-the-run-method">Adding the <code class="language-plaintext highlighter-rouge">run</code> method</h2>
+<p>Now we need to implement the main method. Since we have extended <a href="/releases/current/doc/de/lmu/ifi/dbs/elki/algorithm/AbstractAlgorithm.html">AbstractAlgorithm</a>, we actually have three options for this. The exact signature <em>cannot</em> be defined in Java:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="c1">// Java interface version, but implemented in AbstractAlgorithm</span>
+  <span class="kd">public</span> <span class="nc">OutlierResult</span> <span class="nf">run</span><span class="o">(</span><span class="nc">Database</span> <span class="n">database</span><span class="o">);</span>
+
+  <span class="c1">// Full version, auto-discovered by AbstractAlgorithm#run</span>
+  <span class="kd">public</span> <span class="nc">OutlierResult</span> <span class="nf">run</span><span class="o">(</span><span class="nc">Database</span> <span class="n">database</span><span class="o">,</span> <span class="nc">Relation</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span> <span class="n">relation</span><span class="o">);</span>
+
+  <span class="c1">// Short version, auto-discovered by AbstractAlgorithm#run</span>
+  <span class="kd">public</span> <span class="nc">OutlierResult</span> <span class="nf">run</span><span class="o">(</span><span class="nc">Relation</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span> <span class="n">relation</span><span class="o">);</span></code></pre></figure>
+<p>We need to implement only one of these signatures, the choice is up to us. The versions with <code class="language-plaintext highlighter-rouge">relation</code> will save us some manual work, so we’ll go with these. We’ll create the following stub first, that outlines the general flow. First we initialize the kNN query. Note that the database <em>may</em> choose to use an optimized kNN query here; which is why it needs to know the distance function and value of <em>k</em> in advance. Then we setup a data storage for double values, process the individual elements and finally wrap the result in the expected API. Note that the outlier result API consists of two part: meta data on the score distribution (including minimum and maximum values) and a relation of the actual scores (which essentially is just our data store).</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="kd">public</span> <span class="nc">OutlierResult</span> <span class="nf">run</span><span class="o">(</span><span class="nc">Database</span> <span class="n">database</span><span class="o">,</span> <span class="nc">Relation</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span> <span class="n">relation</span><span class="o">)</span> <span class="o">{</span>
+    <span class="c1">// Get a nearest neighbor query on the relation.</span>
+    <span class="nc">KNNQuery</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span> <span class="n">knnq</span> <span class="o">=</span> <span class="nc">QueryUtil</span><span class="o">.</span><span class="na">getKNNQuery</span><span class="o">(</span><span class="n">relation</span><span class="o">,</span> <span class="n">getDistanceFunction</span><span class="o">(),</span> <span class="n">k</span><span class="o">);</span>
+    <span class="c1">// Output data storage</span>
+    <span class="nc">WritableDoubleDataStore</span> <span class="n">scores</span> <span class="o">=</span> <span class="nc">DataStoreUtil</span><span class="o">.</span><span class="na">makeDoubleStorage</span><span class="o">(</span>
+        <span class="n">relation</span><span class="o">.</span><span class="na">getDBIDs</span><span class="o">(),</span> <span class="nc">DataStoreFactory</span><span class="o">.</span><span class="na">HINT_DB</span><span class="o">);</span>
+    <span class="c1">// Track minimum and maximum scores</span>
+    <span class="nc">DoubleMinMax</span> <span class="n">minmax</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">DoubleMinMax</span><span class="o">();</span>
+    
+    <span class="c1">// Iterate over all objects</span>
+    <span class="k">for</span><span class="o">(</span><span class="nc">DBIDIter</span> <span class="n">iter</span> <span class="o">=</span> <span class="n">relation</span><span class="o">.</span><span class="na">iterDBIDs</span><span class="o">();</span> <span class="n">iter</span><span class="o">.</span><span class="na">valid</span><span class="o">();</span> <span class="n">iter</span><span class="o">.</span><span class="na">advance</span><span class="o">())</span> <span class="o">{</span>
+      <span class="no">DBID</span> <span class="n">id</span> <span class="o">=</span> <span class="n">iter</span><span class="o">.</span><span class="na">getDBID</span><span class="o">();</span>
+      <span class="nc">KNNList</span> <span class="n">neighbors</span> <span class="o">=</span> <span class="n">knnq</span><span class="o">.</span><span class="na">getKNNForDBID</span><span class="o">(</span><span class="n">id</span><span class="o">,</span> <span class="n">k</span><span class="o">);</span>
+      <span class="c1">// TODO: compute actual scores</span>
+    <span class="o">}</span>
+    
+    <span class="c1">// Wrap the result in the standard containers</span>
+    <span class="nc">OutlierScoreMeta</span> <span class="n">meta</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">BasicOutlierScoreMeta</span><span class="o">(</span>
+      <span class="c1">// Actually observed minimum and maximum values</span>
+      <span class="n">minmax</span><span class="o">.</span><span class="na">getMin</span><span class="o">(),</span> <span class="n">minmax</span><span class="o">.</span><span class="na">getMax</span><span class="o">(),</span>
+      <span class="c1">// Theoretical minimum and maximum: no variance to infinite variance</span>
+      <span class="mi">0</span><span class="o">,</span> <span class="nc">Double</span><span class="o">.</span><span class="na">POSITIVE_INFINITY</span><span class="o">);</span>
+    <span class="nc">DoubleRelation</span> <span class="n">rel</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">MaterializedDoubleRelation</span><span class="o">(</span><span class="n">database</span><span class="o">,</span> 
+      <span class="n">relation</span><span class="o">.</span><span class="na">getDBIDs</span><span class="o">(),</span> <span class="s">"stddev-outlier"</span><span class="o">,</span> <span class="n">scores</span><span class="o">);</span>
+    <span class="k">return</span> <span class="k">new</span> <span class="nf">OutlierResult</span><span class="o">(</span><span class="n">meta</span><span class="o">,</span> <span class="n">rel</span><span class="o">);</span>
+  <span class="o">}</span></code></pre></figure>
+<p>Finally, we fill in the actual outlier detection algorithm:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="c1">// Iterate over all objects</span>
+    <span class="k">for</span><span class="o">(</span><span class="nc">DBIDIter</span> <span class="n">iter</span> <span class="o">=</span> <span class="n">relation</span><span class="o">.</span><span class="na">iterDBIDs</span><span class="o">();</span> <span class="n">iter</span><span class="o">.</span><span class="na">valid</span><span class="o">();</span> <span class="n">iter</span><span class="o">.</span><span class="na">advance</span><span class="o">())</span> <span class="o">{</span>
+      <span class="no">DBID</span> <span class="n">id</span> <span class="o">=</span> <span class="n">iter</span><span class="o">.</span><span class="na">getDBID</span><span class="o">();</span>
+      <span class="nc">KNNList</span> <span class="n">neighbors</span> <span class="o">=</span> <span class="n">knnq</span><span class="o">.</span><span class="na">getKNNForDBID</span><span class="o">(</span><span class="n">id</span><span class="o">,</span> <span class="n">k</span><span class="o">);</span>
+      <span class="c1">// Aggregate distances</span>
+      <span class="nc">MeanVariance</span> <span class="n">mv</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">MeanVariance</span><span class="o">();</span>
+      <span class="k">for</span><span class="o">(</span><span class="nc">DoubleDBIDListIter</span> <span class="n">neighbor</span> <span class="o">=</span> <span class="n">neighbors</span><span class="o">.</span><span class="na">iter</span><span class="o">();</span>
+                             <span class="n">neighbor</span><span class="o">.</span><span class="na">valid</span><span class="o">();</span> <span class="n">neighbor</span><span class="o">.</span><span class="na">advance</span><span class="o">())</span> <span class="o">{</span>
+        <span class="c1">// Skip the object itself. The 0 is not very informative.</span>
+        <span class="k">if</span><span class="o">(</span><span class="nc">DBIDUtil</span><span class="o">.</span><span class="na">equal</span><span class="o">(</span><span class="n">iter</span><span class="o">,</span> <span class="n">neighbor</span><span class="o">))</span> <span class="o">{</span>
+          <span class="k">continue</span><span class="o">;</span>
+        <span class="o">}</span>
+        <span class="n">mv</span><span class="o">.</span><span class="na">put</span><span class="o">(</span><span class="n">neighbor</span><span class="o">.</span><span class="na">doubleValue</span><span class="o">());</span>
+      <span class="o">}</span>
+      <span class="c1">// Store score</span>
+      <span class="n">scores</span><span class="o">.</span><span class="na">putDouble</span><span class="o">(</span><span class="n">id</span><span class="o">,</span> <span class="n">mv</span><span class="o">.</span><span class="na">getSampleStddev</span><span class="o">());</span>
+    <span class="o">}</span></code></pre></figure>
+<h2 id="adding-a-parameterizer">Adding a parameterizer</h2>
+<p>Right now, we can invoke the algorithm from Java (albeit a bit tricky), but we also want to be able to use the GUI and command line interface. For this we need to implement <a href="/dev/parameterization">Parameterization</a>, namely add an <a href="/releases/current/doc/de/lmu/ifi/dbs/elki/utilities/optionhandling/AbstractParameterizer.html">AbstractParameterizer</a>. This is as <em>public static inner class named <code class="language-plaintext highlighter-rouge">Parameterizer</code></em> (otherwise it will not be found!). The stub obtained from extracting the superclass parameterizer is:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="kd">public</span> <span class="kd">static</span> <span class="kd">class</span> <span class="nc">Parameterizer</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span>
+      <span class="kd">extends</span> <span class="nc">AbstractDistanceBasedAlgorithm</span><span class="o">.</span><span class="na">Parameterizer</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span> <span class="o">{</span>
+    <span class="nd">@Override</span>
+    <span class="kd">protected</span> <span class="nc">Object</span> <span class="nf">makeInstance</span><span class="o">()</span> <span class="o">{</span>
+      <span class="c1">// TODO Auto-generated method stub</span>
+      <span class="k">return</span> <span class="kc">null</span><span class="o">;</span>
+    <span class="o">}</span>
+  <span class="o">}</span></code></pre></figure>
+<p>We again need to customize this stub slightly: restrict the distance function type, change the return type and override the <code class="language-plaintext highlighter-rouge">makeOptions</code>. The improved stub then is:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="kd">public</span> <span class="kd">static</span> <span class="kd">class</span> <span class="nc">Parameterizer</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span>
+        <span class="kd">extends</span> <span class="nc">AbstractDistanceBasedAlgorithm</span><span class="o">.</span><span class="na">Parameterizer</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span> <span class="o">{</span>
+    <span class="cm">/** Number of neighbors to get */</span>
+    <span class="kt">int</span> <span class="n">k</span><span class="o">;</span>
+    
+    <span class="nd">@Override</span>
+    <span class="kd">protected</span> <span class="kt">void</span> <span class="nf">makeOptions</span><span class="o">(</span><span class="nc">Parameterization</span> <span class="n">config</span><span class="o">)</span> <span class="o">{</span>
+      <span class="kd">super</span><span class="o">.</span><span class="na">makeOptions</span><span class="o">(</span><span class="n">config</span><span class="o">);</span>
+      <span class="c1">// TODO: get parameters</span>
+    <span class="o">}</span>
+
+    <span class="nd">@Override</span>
+    <span class="kd">protected</span> <span class="nc">DistanceStddevOutlier</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span> <span class="nf">makeInstance</span><span class="o">()</span> <span class="o">{</span>
+      <span class="k">return</span> <span class="k">new</span> <span class="nc">DistanceStddevOutlier</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;(</span><span class="n">distanceFunction</span><span class="o">,</span> <span class="n">k</span><span class="o">);</span>
+    <span class="o">}</span>
+  <span class="o">}</span></code></pre></figure>
+<p>There is not much left to do. The distance function is parameterized by the super class. We need to add a parameter for <code class="language-plaintext highlighter-rouge">k</code>:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="kd">public</span> <span class="kd">static</span> <span class="kd">class</span> <span class="nc">Parameterizer</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span>
+        <span class="kd">extends</span> <span class="nc">AbstractDistanceBasedAlgorithm</span><span class="o">.</span><span class="na">Parameterizer</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span> <span class="o">{</span>
+    <span class="cm">/**
+     * Option ID for parameterization.
+     */</span>
+    <span class="kd">public</span> <span class="kd">static</span> <span class="kd">final</span> <span class="nc">OptionID</span> <span class="no">K_ID</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">OptionID</span><span class="o">(</span><span class="s">"stddevout.k"</span><span class="o">,</span>
+        <span class="s">"Number of neighbors to get for stddev based outlier detection."</span><span class="o">);</span>
+
+    <span class="cm">/**
+     * Number of neighbors to get
+     */</span>
+    <span class="kt">int</span> <span class="n">k</span><span class="o">;</span>
+
+    <span class="nd">@Override</span>
+    <span class="kd">protected</span> <span class="kt">void</span> <span class="nf">makeOptions</span><span class="o">(</span><span class="nc">Parameterization</span> <span class="n">config</span><span class="o">)</span> <span class="o">{</span>
+      <span class="c1">// The super class has the distance function parameter!</span>
+      <span class="kd">super</span><span class="o">.</span><span class="na">makeOptions</span><span class="o">(</span><span class="n">config</span><span class="o">);</span>
+      <span class="nc">IntParameter</span> <span class="n">kParam</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">IntParameter</span><span class="o">(</span><span class="no">K_ID</span><span class="o">);</span>
+      <span class="n">kParam</span><span class="o">.</span><span class="na">addConstraint</span><span class="o">(</span><span class="k">new</span> <span class="nc">GreaterConstraint</span><span class="o">(</span><span class="mi">1</span><span class="o">));</span>
+      <span class="k">if</span><span class="o">(</span><span class="n">config</span><span class="o">.</span><span class="na">grab</span><span class="o">(</span><span class="n">kParam</span><span class="o">))</span> <span class="o">{</span>
+        <span class="n">k</span> <span class="o">=</span> <span class="n">kParam</span><span class="o">.</span><span class="na">getValue</span><span class="o">();</span>
+      <span class="o">}</span>
+    <span class="o">}</span>
+
+    <span class="nd">@Override</span>
+    <span class="kd">protected</span> <span class="nc">DistanceStddevOutlier</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span> <span class="nf">makeInstance</span><span class="o">()</span> <span class="o">{</span>
+      <span class="k">return</span> <span class="k">new</span> <span class="nc">DistanceStddevOutlier</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;(</span><span class="n">distanceFunction</span><span class="o">,</span> <span class="n">k</span><span class="o">);</span>
+    <span class="o">}</span>
+  <span class="o">}</span></code></pre></figure>
+<p>Note that we enforce <code class="language-plaintext highlighter-rouge">k &gt; 1</code> in the parameterization API, as the 1 nearest neighbor will usually be the object itself. As you can see, the parameterizer has the purpose of providing a common parameterization interface and the produces the actual Java instance. It connects the UIs to the actual Java code.</p>
+</article>
+</div>
+<aside class="sidebar" id="nav">
+ <div class="elk"><a href="/"><img src="/img/elk200.png" alt="ELKI Data Mining"></a></div>
+ <h1><a href="/">ELKI&nbsp;Data&nbsp;Mining</a></h1>
+ <nav>
+    <a class="item" href="/releases/">Releases</a>
+    <a class="item" href="/license">AGPLv3 License</a>
+    <a class="item" href="/howto/">How To Do ...</a>
+    <a class="item" href="/dev/">Development</a>
+    <a class="item" href="/tutorial/">Tutorials</a>
+      <a class="subitem" href="/tutorial/distance_functions">Custom Distance</a>
+      <a class="subitem active" href="/tutorial/outlier">Outlier Detection</a>
+      <a class="subitem" href="/tutorial/same-size_k_means">Same-Size K-Means</a>
+      <a class="subitem" href="/tutorial/hierarchical_clustering">Implementing HAC</a>
+      <a class="subitem" href="/tutorial/result_handler">Result Handlers</a>
+      <a class="subitem" href="/tutorial/spatial_distance_functions">Spatial Distance Functions</a>
+      <a class="subitem" href="/tutorial/outlier_ODIN">Implementing ODIN</a>
+      <a class="subitem" href="/tutorial/cfsfdp">Implementing CFSFDP</a>
+    <a class="item" href="/algorithms/">Algorithms</a>
+    <a class="item" href="/examples/">Examples</a>
+    <a class="item" href="/faq">FAQ</a>
+    <a class="item" href="/datasets/">Data sets</a>
+    <a class="item" href="/benchmarking">Benchmarking</a>
+    <a class="item" href="/publications">Publications</a>
+    <a class="item" href="/team">ELKI Team</a>
+    <span class="item" style="margin-top: 1em"><a href="https://github.com/elki-project/elki"><span class="icon icon--github"><svg viewBox="0 0 16 16"><path fill="#828282" d="M7.999,0.431c-4.285,0-7.76,3.474-7.76,7.761 c0,3.428,2.223,6.337,5.307,7.363c0.388,0.071,0.53-0.168,0.53-0.374c0-0.184-0.007-0.672-0.01-1.32 c-2.159,0.469-2.614-1.04-2.614-1.04c-0.353-0.896-0.862-1.135-0.862-1.135c-0.705-0.481,0.053-0.472,0.053-0.472 c0.779,0.055,1.189,0.8,1.189,0.8c0.692,1.186,1.816,0.843,2.258,0.645c0.071-0.502,0.271-0.843,0.493-1.037 C4.86,11.425,3.049,10.76,3.049,7.786c0-0.847,0.302-1.54,0.799-2.082C3.768,5.507,3.501,4.718,3.924,3.65 c0,0,0.652-0.209,2.134,0.796C6.677,4.273,7.34,4.187,8,4.184c0.659,0.003,1.323,0.089,1.943,0.261 c1.482-1.004,2.132-0.796,2.132-0.796c0.423,1.068,0.157,1.857,0.077,2.054c0.497,0.542,0.798,1.235,0.798,2.082 c0,2.981-1.814,3.637-3.543,3.829c0.279,0.24,0.527,0.713,0.527,1.437c0,1.037-0.01,1.874-0.01,2.129 c0,0.208,0.14,0.449,0.534,0.373c3.081-1.028,5.302-3.935,5.302-7.362C15.76,3.906,12.285,0.431,7.999,0.431z"/></svg>
+</span> elki-project</a> on GitHub</span>
+ </nav>
+  <a href="#nav" class="navelk"><img src="/img/elk200.png" alt="Go to navigation"></a>
+</aside>
+<script src="/js/maillink.js" type="text/javascript"></script>
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-87792924-1"></script>
+<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);};if(!window['ga-disable-UA-87792924-1']){gtag('js',new Date());gtag('config','UA-87792924-1',{'anonymize_ip':true})}</script>
+</body>
+</html>

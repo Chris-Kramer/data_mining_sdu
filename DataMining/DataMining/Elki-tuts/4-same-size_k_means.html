@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html>
+<head>
+ <meta charset="utf-8">
+ <title>Same-Size K-Means</title>
+ <meta name="description" content="Open-Source Data Mining with Java.">
+ <meta http-equiv="X-UA-Compatible" content="IE=edge">
+ <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/css/main.css">
+<link href="//fonts.googleapis.com/css?family=Inconsolata%7CSource+Sans+Pro" rel="stylesheet">
+<link rel="canonical" href="http://elki-project.github.io/tutorial/same-size_k_means">
+<link rel="shortcut icon" href="/img/favicon.png" type="image/png">
+<link rel="stylesheet" type="text/css" href="//cdnjs.cloudflare.com/ajax/libs/cookieconsent2/3.0.3/cookieconsent.min.css" />
+  <script src="//cdnjs.cloudflare.com/ajax/libs/cookieconsent2/3.0.3/cookieconsent.min.js"></script>
+  <script>window["denyCookies"]=function(b){window["ga-disable-UA-87792924-1"]=b;}
+window.addEventListener("load",function(){window.cookieconsent.initialise({palette:{popup:{background:"#edeff5",text:"#838391"},button:{background:"#4b81e8"}},theme:"classic",type:"opt-out",content:{message:"This website uses Google Analytics cookies to ensure you get the best experience on our website, and is hosted on GitHub servers outside of our control.",link:"GitHub privacy statement",href:"https://help.github.com/articles/github-privacy-statement/",deny:"Disable Google Analytics"},onInitialise:function(status){window.denyCookies(!this.hasConsented());},onStatusChange:function(status,chosenBefore){window.denyCookies(!this.hasConsented());}})});</script>
+</head>
+<body>
+<div class="content">
+ <article class="post">
+<h1 id="same-size-k-means-variation">Same-size k-Means Variation</h1>
+<p class="versioninfo">Version information: ELKI 0.7.1</p>
+<p>In this tutorial, we will create a <strong>k-means variation</strong> that produces clusters of the same size.</p>
+<p>The basic idea of the algorithm is as follows:</p>
+<p>Initialization:</p>
+<ol>
+ <li>Compute the desired cluster size, n/k.</li>
+ <li>Initialize means, preferably with k-means++</li>
+ <li>Order points by the distance to their nearest cluster minus distance to the farthest cluster (= biggest benefit of best over worst assignment)</li>
+ <li>Assign points to their preferred cluster until this cluster is full, then resort remaining objects, without taking the full cluster into account anymore</li>
+</ol>
+<p>This initialization is not optimal - feel free to contribute an improvement to this tutorial! - in particular for the last cluster. But it will do as an initialization method.</p>
+<p>Additional data structure: for every cluster we keep a list of objects willing to leave the cluster. This makes it easier to find transfer candidates. Whenever we have an element that wants to enter a cluster, the top element wanting to leave will be considered for switching. (It may be worth a try to consider more than the top element!)</p>
+<p>Iteration:</p>
+<ol>
+ <li>Compute current cluster means</li>
+ <li>For each object, compute the distances to the cluster means</li>
+ <li>Sort elements based on the delta of the current assignment and the best possible alternate assignment.</li>
+ <li>For each element by priority:
+   <ol>
+     <li>For each other cluster, by element gain, unless already moved:
+       <ol>
+         <li>If there is an element wanting to leave the other cluster and this swap yields and improvement, swap the two elements</li>
+         <li>If the element can be moved without violating size constraints, move it</li>
+       </ol>
+     </li>
+     <li>If the element was not changed, add to outgoing transfer list.</li>
+   </ol>
+ </li>
+ <li>If no more transfers were done (or max iteration threshold was reached), terminate</li>
+</ol>
+<p>Convergence can be proven the same way as with k-means: any transfer must decrease variance (and would also happen in k-means).</p>
+<p>Room for improvement: better logic for finding optimal transfers, e.g. by solving triangles: object 1 from A to B, object 2 from B to C, object 3 from C to A also preserves sizes!</p>
+<h2 id="auto-generated-code">Auto-generated code</h2>
+<p>Since this is a K-means variant, we can use the base class <a href="/releases/current/doc/de/lmu/ifi/dbs/elki/algorithm/clustering/kmeans/AbstractKMeans.html">AbstractKMeans</a>. Generating the standard methods, adding a logger and choosing the generics yields the following code blueprint.</p>
+<p>For the generics, we want to allow arbitrary vector types: <code class="language-plaintext highlighter-rouge">V extends NumberVector</code>.The cluster model will be a simple <code class="language-plaintext highlighter-rouge">MeanModel</code> (using a <code class="language-plaintext highlighter-rouge">KMeansModel</code> instead would trigger Voronoi cell visualization, which is no longer appropriate). The reason why we have to choose these generics is that the abstract class <code class="language-plaintext highlighter-rouge">AbstractKMeans</code> is also used e.g. for KMedians and similar algorithms with looser constraints than KMeans or our new variation.</p>
+<p>For the constructor, we <em>narrow down</em> the distance function to a <code class="language-plaintext highlighter-rouge">NumberVectorDistanceFunction&lt;? super V&gt;</code>. This would only be automatic if we had this yet another generic in <code class="language-plaintext highlighter-rouge">AbstractKMeans</code>. This narrower distance function has two properties important to us: A) it can be computed on arbitrary number vectors (including the means, we will be computing) and B) they return a double value. In case you are wondering: yes, in ELKI there exist distance functions not defined on number vectors and not having double values.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java"><span class="kn">package</span> <span class="nn">tutorial.clustering</span><span class="o">;</span>
+
+<span class="kn">import</span> <span class="nn">de.lmu.ifi.dbs.elki.algorithm.clustering.kmeans.AbstractKMeans</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">de.lmu.ifi.dbs.elki.algorithm.clustering.kmeans.KMeansInitialization</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">de.lmu.ifi.dbs.elki.data.NumberVector</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">de.lmu.ifi.dbs.elki.data.model.KMeansModel</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">de.lmu.ifi.dbs.elki.distance.distancefunction.NumberVectorDistanceFunction</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">de.lmu.ifi.dbs.elki.logging.Logging</span><span class="o">;</span>
+
+<span class="kd">public</span> <span class="kd">class</span> <span class="nc">SameSizeKMeansAlgorithm</span><span class="o">&lt;</span><span class="no">V</span> <span class="kd">extends</span> <span class="nc">NumberVector</span><span class="o">&gt;</span>
+    <span class="kd">extends</span> <span class="nc">AbstractKMeans</span><span class="o">&lt;</span><span class="no">V</span><span class="o">,</span> <span class="nc">MeanModel</span><span class="o">&gt;</span> <span class="o">{</span>
+  <span class="cm">/**
+   * Class logger
+   */</span>
+  <span class="kd">private</span> <span class="kd">static</span> <span class="kd">final</span> <span class="nc">Logging</span> <span class="no">LOG</span> <span class="o">=</span> <span class="nc">Logging</span><span class="o">.</span><span class="na">getLogger</span><span class="o">(</span><span class="nc">SameSizeKMeansAlgorithm</span><span class="o">.</span><span class="na">class</span><span class="o">);</span>
+
+  <span class="cm">/**
+   * Constructor.
+   * 
+   * @param distanceFunction Distance function
+   * @param k K parameter
+   * @param maxiter Maximum number of iterations
+   * @param initializer
+   */</span>
+  <span class="kd">public</span> <span class="nf">SameSizeKMeansAlgorithm</span><span class="o">(</span>
+      <span class="nc">NumberVectorDistanceFunction</span><span class="o">&lt;?</span> <span class="kd">super</span> <span class="no">V</span><span class="o">&gt;</span> <span class="n">distanceFunction</span><span class="o">,</span>
+      <span class="kt">int</span> <span class="n">k</span><span class="o">,</span> <span class="kt">int</span> <span class="n">maxiter</span><span class="o">,</span> <span class="nc">KMeansInitialization</span><span class="o">&lt;?</span> <span class="kd">super</span> <span class="no">V</span><span class="o">&gt;</span> <span class="n">initializer</span><span class="o">)</span> <span class="o">{</span>
+    <span class="kd">super</span><span class="o">(</span><span class="n">distanceFunction</span><span class="o">,</span> <span class="n">k</span><span class="o">,</span> <span class="n">maxiter</span><span class="o">,</span> <span class="n">initializer</span><span class="o">);</span>
+  <span class="o">}</span>
+
+  <span class="nd">@Override</span>
+  <span class="kd">protected</span> <span class="nc">Logging</span> <span class="nf">getLogger</span><span class="o">()</span> <span class="o">{</span>
+    <span class="k">return</span> <span class="no">LOG</span><span class="o">;</span>
+  <span class="o">}</span>
+<span class="o">}</span></code></pre></figure>
+<h2 id="the-main-method-stub">The main method stub</h2>
+<p>Note that no <code class="language-plaintext highlighter-rouge">run</code> method was generated automatically. This is due to a limitation in Java interfaces, and ELKI allowing multi-relational algorithms. Our algorithm, however, is just single relational. So we can use a very simple <code class="language-plaintext highlighter-rouge">run</code> method:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="cm">/**
+   * Run k-means.
+   * 
+   * @param database Database
+   * @param relation relation to use
+   * @return result
+   */</span>
+  <span class="kd">public</span> <span class="nc">Clustering</span><span class="o">&lt;</span><span class="nc">MeanModel</span><span class="o">&gt;</span> <span class="nf">run</span><span class="o">(</span><span class="nc">Database</span> <span class="n">database</span><span class="o">,</span> <span class="nc">Relation</span><span class="o">&lt;</span><span class="no">V</span><span class="o">&gt;</span> <span class="n">relation</span><span class="o">)</span> <span class="o">{</span>
+    <span class="c1">// TODO</span>
+    <span class="k">return</span> <span class="kc">null</span><span class="o">;</span>
+  <span class="o">}</span></code></pre></figure>
+<p>In contrast to the <a href="/tutorial/outlier">outlier tutorial</a>, we do not have to implement <code class="language-plaintext highlighter-rouge">getInputTypeRestriction()</code> - we inherit an appropriate implementation from <code class="language-plaintext highlighter-rouge">AbstractKMeans</code> (which actually uses the restriction given by the distance function).</p>
+<h2 id="object-metadata">Object metadata</h2>
+<p>To find the optimal assignment and evaluate transfers, we need some data on the objects ready. We will need some extra memory for this, on the order of O(n*k). In particular, we want to track the distances from each object to each cluster center, but also which cluster the object is the closest to, and which would be a better choice. For this, we need a simple utility inner class, which we call <code class="language-plaintext highlighter-rouge">Meta</code>:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="kd">private</span> <span class="kd">class</span> <span class="nc">Meta</span> <span class="o">{</span>
+    <span class="cm">/**
+     * Distance to the cluster centers.
+     */</span>
+    <span class="kt">double</span><span class="o">[]</span> <span class="n">dists</span><span class="o">;</span>
+
+    <span class="cm">/**
+     * Indexes: primary assignment (current or best), secondary assignment
+     * (second best or worst). The actual meaning differs from initialization to
+     * iteration phase!
+     */</span>
+    <span class="kt">int</span> <span class="n">primary</span><span class="o">,</span> <span class="n">secondary</span><span class="o">;</span>
+
+    <span class="cm">/**
+     * Constructor.
+     * 
+     * @param k
+     */</span>
+    <span class="kd">protected</span> <span class="nf">Meta</span><span class="o">(</span><span class="kt">int</span> <span class="n">k</span><span class="o">)</span> <span class="o">{</span>
+      <span class="n">dists</span> <span class="o">=</span> <span class="k">new</span> <span class="kt">double</span><span class="o">[</span><span class="n">k</span><span class="o">];</span>
+      <span class="nc">Arrays</span><span class="o">.</span><span class="na">fill</span><span class="o">(</span><span class="n">dists</span><span class="o">,</span> <span class="nc">Double</span><span class="o">.</span><span class="na">POSITIVE_INFINITY</span><span class="o">);</span>
+      <span class="n">primary</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span>
+      <span class="n">secondary</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span>
+    <span class="o">}</span>
+  <span class="o">}</span></code></pre></figure>
+<p>to make the code more readable, we also add two utility functions to this inner class. The first, <code class="language-plaintext highlighter-rouge">priority</code> computes the priority we use in the initialization phase: the difference between the worst and the best assignments. The second, <code class="language-plaintext highlighter-rouge">gain</code> computes the expected gain from moving the object from the current assignment to a different cluster.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="cm">/**
+     * Priority / badness: difference between best and worst. (Assuming that
+     * "secondary" is the worst).
+     * 
+     * @return Priority
+     */</span>
+    <span class="kd">protected</span> <span class="kt">double</span> <span class="nf">priority</span><span class="o">()</span> <span class="o">{</span>
+      <span class="k">return</span> <span class="n">dists</span><span class="o">[</span><span class="n">secondary</span><span class="o">]</span> <span class="o">-</span> <span class="n">dists</span><span class="o">[</span><span class="n">primary</span><span class="o">];</span>
+    <span class="o">}</span>
+
+    <span class="cm">/**
+     * Gain from switching to cluster i.
+     * 
+     * @param i Target cluster
+     * @return Gain
+     */</span>
+    <span class="kd">protected</span> <span class="kt">double</span> <span class="nf">gain</span><span class="o">(</span><span class="kt">int</span> <span class="n">i</span><span class="o">)</span> <span class="o">{</span>
+      <span class="k">return</span> <span class="n">dists</span><span class="o">[</span><span class="n">primary</span><span class="o">]</span> <span class="o">-</span> <span class="n">dists</span><span class="o">[</span><span class="n">i</span><span class="o">];</span>
+    <span class="o">}</span></code></pre></figure>
+<p>and of course we need to build an initial data storage. First, we need to cast the distance function (unless we add yet another generics to the parent class!). Then we get a storage from the data storage layer. Depending on the database size and properties, this can be anything like an array (the default case for static data sets), a hash map (the default for dynamic data sets) or a B-tree (in the future, for data sets that don’t fit into main memory).</p>
+<p>We then iterate over all objects. <code class="language-plaintext highlighter-rouge">for (DBIDIter id = relation.iterDBIDs(); id.valid(); id.advance()) {</code> is the usual iterator construct in ELKI. This needs less memory than the usual java <code class="language-plaintext highlighter-rouge">Iterator</code> classes for <a href="/dev/dbids">reasons outlined here</a>. We then compute the distance to each mean, and track the largest (in <code class="language-plaintext highlighter-rouge">c.primary</code>) and smallest (in <code class="language-plaintext highlighter-rouge">c.secondary</code>) such distance to be used in the initialization phase.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="kd">protected</span> <span class="nc">WritableDataStore</span><span class="o">&lt;</span><span class="nc">Meta</span><span class="o">&gt;</span> <span class="nf">initializeMeta</span><span class="o">(</span><span class="nc">Relation</span><span class="o">&lt;</span><span class="no">V</span><span class="o">&gt;</span> <span class="n">relation</span><span class="o">,</span> <span class="kt">double</span><span class="o">[][]</span> <span class="n">means</span><span class="o">)</span> <span class="o">{</span>
+    <span class="nc">NumberVectorDistanceFunction</span><span class="o">&lt;?</span> <span class="kd">super</span> <span class="no">V</span><span class="o">&gt;</span> <span class="n">df</span> <span class="o">=</span> <span class="n">getDistanceFunction</span><span class="o">();</span>
+    <span class="c1">// The actual storage</span>
+    <span class="kd">final</span> <span class="nc">WritableDataStore</span><span class="o">&lt;</span><span class="nc">Meta</span><span class="o">&gt;</span> <span class="n">metas</span> <span class="o">=</span> <span class="nc">DataStoreUtil</span><span class="o">.</span><span class="na">makeStorage</span><span class="o">(</span><span class="n">relation</span><span class="o">.</span><span class="na">getDBIDs</span><span class="o">(),</span>
+        <span class="nc">DataStoreFactory</span><span class="o">.</span><span class="na">HINT_HOT</span> <span class="o">|</span> <span class="nc">DataStoreFactory</span><span class="o">.</span><span class="na">HINT_TEMP</span><span class="o">,</span> <span class="nc">Meta</span><span class="o">.</span><span class="na">class</span><span class="o">);</span>
+    <span class="c1">// Build the metadata, track the two nearest cluster centers.</span>
+    <span class="k">for</span> <span class="o">(</span><span class="nc">DBIDIter</span> <span class="n">id</span> <span class="o">=</span> <span class="n">relation</span><span class="o">.</span><span class="na">iterDBIDs</span><span class="o">();</span> <span class="n">id</span><span class="o">.</span><span class="na">valid</span><span class="o">();</span> <span class="n">id</span><span class="o">.</span><span class="na">advance</span><span class="o">())</span> <span class="o">{</span>
+      <span class="nc">Meta</span> <span class="n">c</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">Meta</span><span class="o">(</span><span class="n">k</span><span class="o">);</span>
+      <span class="no">V</span> <span class="n">fv</span> <span class="o">=</span> <span class="n">relation</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">id</span><span class="o">);</span>
+      <span class="k">for</span> <span class="o">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">k</span><span class="o">;</span> <span class="n">i</span><span class="o">++)</span> <span class="o">{</span>
+        <span class="kd">final</span> <span class="kt">double</span> <span class="n">d</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="na">dists</span><span class="o">[</span><span class="n">i</span><span class="o">]</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="na">distance</span><span class="o">(</span><span class="n">fv</span><span class="o">,</span> <span class="nc">DoubleVector</span><span class="o">.</span><span class="na">wrap</span><span class="o">(</span><span class="n">means</span><span class="o">[</span><span class="n">i</span><span class="o">]));</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">i</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="o">)</span> <span class="o">{</span>
+          <span class="k">if</span> <span class="o">(</span><span class="n">d</span> <span class="o">&lt;</span> <span class="n">c</span><span class="o">.</span><span class="na">dists</span><span class="o">[</span><span class="n">c</span><span class="o">.</span><span class="na">primary</span><span class="o">])</span> <span class="o">{</span>
+            <span class="n">c</span><span class="o">.</span><span class="na">primary</span> <span class="o">=</span> <span class="n">i</span><span class="o">;</span>
+          <span class="o">}</span>
+          <span class="k">else</span> <span class="nf">if</span> <span class="o">(</span><span class="n">d</span> <span class="o">&gt;</span> <span class="n">c</span><span class="o">.</span><span class="na">dists</span><span class="o">[</span><span class="n">c</span><span class="o">.</span><span class="na">secondary</span><span class="o">])</span> <span class="o">{</span>
+            <span class="n">c</span><span class="o">.</span><span class="na">secondary</span> <span class="o">=</span> <span class="n">i</span><span class="o">;</span>
+          <span class="o">}</span>
+        <span class="o">}</span>
+      <span class="o">}</span>
+      <span class="n">metas</span><span class="o">.</span><span class="na">put</span><span class="o">(</span><span class="n">id</span><span class="o">,</span> <span class="n">c</span><span class="o">);</span>
+    <span class="o">}</span>
+    <span class="k">return</span> <span class="n">metas</span><span class="o">;</span>
+  <span class="o">}</span></code></pre></figure>
+<h2 id="performing-the-initial-assignment">Performing the initial assignment</h2>
+<p>For the initial assignment, we first will need to sort the data set. Technically, we are just sorting references to the database, which can conveniently be done in a <code class="language-plaintext highlighter-rouge">ArrayModifiableDBIDs</code> class. This class is similar to an <code class="language-plaintext highlighter-rouge">ArrayList&lt;DBID&gt;</code>, but again will use significantly less memory. Plus, it offers additional functionality. For sorting we need a comparator, which will compare objects by the <code class="language-plaintext highlighter-rouge">priority</code> method we defined above.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="kd">protected</span> <span class="nc">ArrayModifiableDBIDs</span> <span class="nf">initialAssignment</span><span class="o">(</span><span class="nc">List</span><span class="o">&lt;</span><span class="nc">ModifiableDBIDs</span><span class="o">&gt;</span> <span class="n">clusters</span><span class="o">,</span>
+      <span class="kd">final</span> <span class="nc">WritableDataStore</span><span class="o">&lt;</span><span class="nc">Meta</span><span class="o">&gt;</span> <span class="n">metas</span><span class="o">,</span> <span class="nc">DBIDs</span> <span class="n">ids</span><span class="o">)</span> <span class="o">{</span>
+    <span class="c1">// Build a sorted list of objects, by descending distance delta</span>
+    <span class="nc">ArrayModifiableDBIDs</span> <span class="n">tids</span> <span class="o">=</span> <span class="nc">DBIDUtil</span><span class="o">.</span><span class="na">newArray</span><span class="o">(</span><span class="n">ids</span><span class="o">);</span>
+    <span class="c1">// Our desired cluster size:</span>
+    <span class="kd">final</span> <span class="kt">int</span> <span class="n">maxsize</span> <span class="o">=</span> <span class="o">(</span><span class="n">tids</span><span class="o">.</span><span class="na">size</span><span class="o">()</span> <span class="o">+</span> <span class="n">k</span> <span class="o">-</span> <span class="mi">1</span><span class="o">)</span> <span class="o">/</span> <span class="n">k</span><span class="o">;</span> <span class="c1">// rounded up</span>
+    <span class="c1">// Comparator: sort by largest benefit of assigning to preferred cluster.</span>
+    <span class="kd">final</span> <span class="nc">Comparator</span><span class="o">&lt;</span><span class="nc">DBIDRef</span><span class="o">&gt;</span> <span class="n">comp</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">Comparator</span><span class="o">&lt;</span><span class="nc">DBIDRef</span><span class="o">&gt;()</span> <span class="o">{</span>
+      <span class="nd">@Override</span>
+      <span class="kd">public</span> <span class="kt">int</span> <span class="nf">compare</span><span class="o">(</span><span class="nc">DBIDRef</span> <span class="n">o1</span><span class="o">,</span> <span class="nc">DBIDRef</span> <span class="n">o2</span><span class="o">)</span> <span class="o">{</span>
+        <span class="nc">Meta</span> <span class="n">c1</span> <span class="o">=</span> <span class="n">metas</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">o1</span><span class="o">),</span> <span class="n">c2</span> <span class="o">=</span> <span class="n">metas</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">o2</span><span class="o">);</span>
+        <span class="k">return</span> <span class="o">-</span><span class="nc">Double</span><span class="o">.</span><span class="na">compare</span><span class="o">(</span><span class="n">c1</span><span class="o">.</span><span class="na">priority</span><span class="o">(),</span> <span class="n">c2</span><span class="o">.</span><span class="na">priority</span><span class="o">());</span>
+      <span class="o">}</span>
+    <span class="o">};</span>
+    <span class="c1">// We will use this iterator below. It allows seeking!</span>
+    <span class="nc">DBIDArrayIter</span> <span class="n">id</span> <span class="o">=</span> <span class="n">tids</span><span class="o">.</span><span class="na">iter</span><span class="o">();</span></code></pre></figure>
+<p>For the actual initialization, we may need to resort multiple times. We use the variable <code class="language-plaintext highlighter-rouge">start</code> to track which elements we already processed, and only sort the elements after this. This time we need an advanced iterator: <code class="language-plaintext highlighter-rouge">DBIDArrayIter</code> can not only move forward, but can also move backward and seek to arbitrary positions in the array. We use this to seek to the starting position of the current iteration.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="c1">// Initialization phase:</span>
+    <span class="k">for</span> <span class="o">(</span><span class="kt">int</span> <span class="n">start</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span> <span class="n">start</span> <span class="o">&lt;</span> <span class="n">tids</span><span class="o">.</span><span class="na">size</span><span class="o">();)</span> <span class="o">{</span>
+      <span class="n">tids</span><span class="o">.</span><span class="na">sort</span><span class="o">(</span><span class="n">start</span><span class="o">,</span> <span class="n">tids</span><span class="o">.</span><span class="na">size</span><span class="o">(),</span> <span class="n">comp</span><span class="o">);</span>
+      <span class="k">for</span> <span class="o">(</span><span class="n">id</span><span class="o">.</span><span class="na">seek</span><span class="o">(</span><span class="n">start</span><span class="o">);</span> <span class="n">id</span><span class="o">.</span><span class="na">valid</span><span class="o">();</span> <span class="n">id</span><span class="o">.</span><span class="na">advance</span><span class="o">())</span> <span class="o">{</span></code></pre></figure>
+<p>We now assign the next element to it’s preferred cluster. The cluster cannot be full yet, which we will actually ensure <em>below</em>. If you feel uncomfortable, you can easily add an assertion.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">        <span class="nc">Meta</span> <span class="n">c</span> <span class="o">=</span> <span class="n">metas</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">id</span><span class="o">);</span>
+        <span class="c1">// Assigning to best cluster - which cannot be full yet!</span>
+        <span class="nc">ModifiableDBIDs</span> <span class="n">cluster</span> <span class="o">=</span> <span class="n">clusters</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">c</span><span class="o">.</span><span class="na">primary</span><span class="o">);</span>
+        <span class="n">cluster</span><span class="o">.</span><span class="na">add</span><span class="o">(</span><span class="n">id</span><span class="o">);</span>
+        <span class="n">start</span><span class="o">++;</span></code></pre></figure>
+<p>However, after adding an element, it might be full now. In this case, we want to prevent any further objects of being assigned to this cluster, and also re-sort the data set.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">        <span class="c1">// Now the cluster may have become completely filled:</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">cluster</span><span class="o">.</span><span class="na">size</span><span class="o">()</span> <span class="o">==</span> <span class="n">maxsize</span><span class="o">)</span> <span class="o">{</span>
+          <span class="kd">final</span> <span class="kt">int</span> <span class="n">full</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="na">primary</span><span class="o">;</span></code></pre></figure>
+<p>As we can seek back to our current position <code class="language-plaintext highlighter-rouge">start</code>, we can just use this iterator to go through all remaining objects, and update their preferred cluster assignment, removing the references to the now full cluster. The <code class="language-plaintext highlighter-rouge">continue</code> taking us to the next iteration (and thus updating the sorting and restarting at <code class="language-plaintext highlighter-rouge">start</code>) is strictly speaking not necessary: the iterator is at the end of the data set now anyway.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">          <span class="c1">// Refresh the not yet assigned objects where necessary:</span>
+          <span class="k">for</span> <span class="o">(;</span> <span class="n">id</span><span class="o">.</span><span class="na">valid</span><span class="o">();</span> <span class="n">id</span><span class="o">.</span><span class="na">advance</span><span class="o">())</span> <span class="o">{</span>
+            <span class="nc">Meta</span> <span class="n">ca</span> <span class="o">=</span> <span class="n">metas</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">id</span><span class="o">);</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">ca</span><span class="o">.</span><span class="na">primary</span> <span class="o">==</span> <span class="n">full</span><span class="o">)</span> <span class="o">{</span>
+              <span class="c1">// Update the best index:</span>
+              <span class="k">for</span> <span class="o">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">k</span><span class="o">;</span> <span class="n">i</span><span class="o">++)</span> <span class="o">{</span>
+                <span class="k">if</span> <span class="o">(</span><span class="n">i</span> <span class="o">==</span> <span class="n">full</span> <span class="o">||</span> <span class="n">clusters</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">i</span><span class="o">).</span><span class="na">size</span><span class="o">()</span> <span class="o">&gt;=</span> <span class="n">maxsize</span><span class="o">)</span> <span class="o">{</span>
+                  <span class="k">continue</span><span class="o">;</span>
+                <span class="o">}</span>
+                <span class="k">if</span> <span class="o">(</span><span class="n">ca</span><span class="o">.</span><span class="na">primary</span> <span class="o">==</span> <span class="n">full</span> <span class="o">||</span> <span class="n">ca</span><span class="o">.</span><span class="na">dists</span><span class="o">[</span><span class="n">i</span><span class="o">]</span> <span class="o">&lt;</span> <span class="n">ca</span><span class="o">.</span><span class="na">dists</span><span class="o">[</span><span class="n">ca</span><span class="o">.</span><span class="na">primary</span><span class="o">])</span> <span class="o">{</span>
+                  <span class="n">ca</span><span class="o">.</span><span class="na">primary</span> <span class="o">=</span> <span class="n">i</span><span class="o">;</span>
+                <span class="o">}</span>
+              <span class="o">}</span>
+              <span class="n">metas</span><span class="o">.</span><span class="na">put</span><span class="o">(</span><span class="n">id</span><span class="o">,</span> <span class="n">ca</span><span class="o">);</span> <span class="c1">// Changed.</span>
+            <span class="o">}</span>
+          <span class="o">}</span>
+          <span class="c1">// The next iteration will perform the sorting!</span>
+          <span class="k">break</span><span class="o">;</span> <span class="c1">// not really necessary - iterator is at end anyway.</span>
+        <span class="o">}</span>
+      <span class="o">}</span>
+      <span class="c1">// Note: we expect Candidate.a == cluster the object is assigned to!</span>
+    <span class="o">}</span>
+    <span class="k">return</span> <span class="n">tids</span><span class="o">;</span>
+  <span class="o">}</span></code></pre></figure>
+<p>Note that we ensured that <code class="language-plaintext highlighter-rouge">Meta.primary</code> contains the cluster number the object is currently assigned to. We do not ensure a particular value for <code class="language-plaintext highlighter-rouge">Meta.secondary</code>. We could also discard the <code class="language-plaintext highlighter-rouge">tids</code> array at this point, but we can also just re-use it in the next part.</p>
+<h2 id="updating-the-means">Updating the means</h2>
+<p>For updating the means, we are just going to use the method provided by the abstract super class:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="n">means</span> <span class="o">=</span> <span class="n">means</span><span class="o">(</span><span class="n">clusters</span><span class="o">,</span> <span class="n">means</span><span class="o">,</span> <span class="n">relation</span><span class="o">);</span></code></pre></figure>
+<p>We also need to update the distances from each object to the current (possibly changed!) means. We will do this in a helper function. In addition, we also track which mean would be the best alternate assignment. So after this run, <code class="language-plaintext highlighter-rouge">Meta.primary</code> still is the cluster the object is currently assigned to, while <code class="language-plaintext highlighter-rouge">Meta.secondary</code> now is the best other choice.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="kd">protected</span> <span class="kt">void</span> <span class="nf">updateDistances</span><span class="o">(</span><span class="nc">Relation</span><span class="o">&lt;</span><span class="no">V</span><span class="o">&gt;</span> <span class="n">relation</span><span class="o">,</span> <span class="kt">double</span><span class="o">[][]</span> <span class="n">means</span><span class="o">,</span>
+      <span class="kd">final</span> <span class="nc">WritableDataStore</span><span class="o">&lt;</span><span class="nc">Meta</span><span class="o">&gt;</span> <span class="n">metas</span><span class="o">,</span> <span class="nc">NumberVectorDistanceFunction</span><span class="o">&lt;?</span> <span class="kd">super</span> <span class="no">V</span><span class="o">&gt;</span> <span class="n">df</span><span class="o">)</span> <span class="o">{</span>
+    <span class="k">for</span> <span class="o">(</span><span class="nc">DBIDIter</span> <span class="n">id</span> <span class="o">=</span> <span class="n">relation</span><span class="o">.</span><span class="na">iterDBIDs</span><span class="o">();</span> <span class="n">id</span><span class="o">.</span><span class="na">valid</span><span class="o">();</span> <span class="n">id</span><span class="o">.</span><span class="na">advance</span><span class="o">())</span> <span class="o">{</span>
+      <span class="nc">Meta</span> <span class="n">c</span> <span class="o">=</span> <span class="n">metas</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">id</span><span class="o">);</span>
+      <span class="no">V</span> <span class="n">fv</span> <span class="o">=</span> <span class="n">relation</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">id</span><span class="o">);</span>
+      <span class="c1">// Update distances to means.</span>
+      <span class="n">c</span><span class="o">.</span><span class="na">secondary</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="o">;</span>
+      <span class="k">for</span> <span class="o">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">k</span><span class="o">;</span> <span class="n">i</span><span class="o">++)</span> <span class="o">{</span>
+        <span class="n">c</span><span class="o">.</span><span class="na">dists</span><span class="o">[</span><span class="n">i</span><span class="o">]</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="na">distance</span><span class="o">(</span><span class="n">fv</span><span class="o">,</span> <span class="nc">DoubleVector</span><span class="o">.</span><span class="na">wrap</span><span class="o">(</span><span class="n">means</span><span class="o">[</span><span class="n">i</span><span class="o">]));</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">c</span><span class="o">.</span><span class="na">primary</span> <span class="o">!=</span> <span class="n">i</span><span class="o">)</span> <span class="o">{</span>
+          <span class="k">if</span> <span class="o">(</span><span class="n">c</span><span class="o">.</span><span class="na">secondary</span> <span class="o">&lt;</span> <span class="mi">0</span> <span class="o">||</span> <span class="n">c</span><span class="o">.</span><span class="na">dists</span><span class="o">[</span><span class="n">i</span><span class="o">]</span> <span class="o">&lt;</span> <span class="n">c</span><span class="o">.</span><span class="na">dists</span><span class="o">[</span><span class="n">c</span><span class="o">.</span><span class="na">secondary</span><span class="o">])</span> <span class="o">{</span>
+            <span class="n">c</span><span class="o">.</span><span class="na">secondary</span> <span class="o">=</span> <span class="n">i</span><span class="o">;</span>
+          <span class="o">}</span>
+        <span class="o">}</span>
+      <span class="o">}</span>
+      <span class="n">metas</span><span class="o">.</span><span class="na">put</span><span class="o">(</span><span class="n">id</span><span class="o">,</span> <span class="n">c</span><span class="o">);</span> <span class="c1">// Changed.</span>
+    <span class="o">}</span>
+  <span class="o">}</span></code></pre></figure>
+<h2 id="the-refinement-procedure">The refinement procedure</h2>
+<p>This brings us finally to the core of our algorithm: the refinement procedure, which performs Lloyd-Forgy-style iterations to improve the result, but in contrast to these ensures that the cluster sizes remain in the given bounds. First of all, we compute these bounds, in the form of an upper and a lower limit, if the number of objects is not divisible by <code class="language-plaintext highlighter-rouge">k</code>.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="kd">protected</span> <span class="kt">double</span><span class="o">[][]</span> <span class="nf">refineResult</span><span class="o">(</span><span class="nc">Relation</span><span class="o">&lt;</span><span class="no">V</span><span class="o">&gt;</span> <span class="n">relation</span><span class="o">,</span>
+      <span class="kt">double</span><span class="o">[][]</span> <span class="n">means</span><span class="o">,</span> <span class="nc">List</span><span class="o">&lt;</span><span class="nc">ModifiableDBIDs</span><span class="o">&gt;</span> <span class="n">clusters</span><span class="o">,</span>
+      <span class="kd">final</span> <span class="nc">WritableDataStore</span><span class="o">&lt;</span><span class="nc">Meta</span><span class="o">&gt;</span> <span class="n">metas</span><span class="o">,</span> <span class="nc">ArrayModifiableDBIDs</span> <span class="n">tids</span><span class="o">)</span> <span class="o">{</span>
+    <span class="nc">NumberVectorDistanceFunction</span><span class="o">&lt;?</span> <span class="kd">super</span> <span class="no">V</span><span class="o">&gt;</span> <span class="n">df</span> <span class="o">=</span> <span class="n">getDistanceFunction</span><span class="o">();</span>
+    <span class="c1">// Our desired cluster size:</span>
+    <span class="kd">final</span> <span class="kt">int</span> <span class="n">minsize</span> <span class="o">=</span> <span class="n">tids</span><span class="o">.</span><span class="na">size</span><span class="o">()</span> <span class="o">/</span> <span class="n">k</span><span class="o">;</span> <span class="c1">// rounded down</span>
+    <span class="kd">final</span> <span class="kt">int</span> <span class="n">maxsize</span> <span class="o">=</span> <span class="o">(</span><span class="n">tids</span><span class="o">.</span><span class="na">size</span><span class="o">()</span> <span class="o">+</span> <span class="n">k</span> <span class="o">-</span> <span class="mi">1</span><span class="o">)</span> <span class="o">/</span> <span class="n">k</span><span class="o">;</span> <span class="c1">// rounded up</span></code></pre></figure>
+<p>We also need a different comparator than before, which now uses the <code class="language-plaintext highlighter-rouge">Meta.priority</code> method we wrote earlier.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="c1">// Comparator: sort by largest gain by transfer</span>
+    <span class="kd">final</span> <span class="nc">Comparator</span><span class="o">&lt;</span><span class="nc">DBIDRef</span><span class="o">&gt;</span> <span class="n">comp</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">Comparator</span><span class="o">&lt;</span><span class="nc">DBIDRef</span><span class="o">&gt;()</span> <span class="o">{</span>
+      <span class="nd">@Override</span>
+      <span class="kd">public</span> <span class="kt">int</span> <span class="nf">compare</span><span class="o">(</span><span class="nc">DBIDRef</span> <span class="n">o1</span><span class="o">,</span> <span class="nc">DBIDRef</span> <span class="n">o2</span><span class="o">)</span> <span class="o">{</span>
+        <span class="nc">Meta</span> <span class="n">c1</span> <span class="o">=</span> <span class="n">metas</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">o1</span><span class="o">),</span> <span class="n">c2</span> <span class="o">=</span> <span class="n">metas</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">o2</span><span class="o">);</span>
+        <span class="k">return</span> <span class="nc">Double</span><span class="o">.</span><span class="na">compare</span><span class="o">(</span><span class="n">c1</span><span class="o">.</span><span class="na">priority</span><span class="o">(),</span> <span class="n">c2</span><span class="o">.</span><span class="na">priority</span><span class="o">());</span>
+      <span class="o">}</span>
+    <span class="o">};</span></code></pre></figure>
+<p>We also need a second comparator. The code will follow below; it’s not particularly tricky, but sorts an <code class="language-plaintext highlighter-rouge">int[]</code> array of cluster numbers <code class="language-plaintext highlighter-rouge">[0..k-1]</code> by increasing distance to the cluster means.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="c1">// List for sorting cluster preferences</span>
+    <span class="kt">int</span><span class="o">[]</span> <span class="n">preferences</span> <span class="o">=</span> <span class="nc">MathUtil</span><span class="o">.</span><span class="na">sequence</span><span class="o">(</span><span class="mi">0</span><span class="o">,</span> <span class="n">k</span><span class="o">)</span>
+    <span class="c1">// Comparator for this list.</span>
+    <span class="kd">final</span> <span class="nc">PreferenceComparator</span> <span class="n">pcomp</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">PreferenceComparator</span><span class="o">();</span></code></pre></figure>
+<p>In the idea description of the algorithm we already mentioned transfer lists. We also need to initialize these:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="c1">// Initialize transfer lists:</span>
+    <span class="nc">ArrayModifiableDBIDs</span><span class="o">[]</span> <span class="n">transfers</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">ArrayModifiableDBIDs</span><span class="o">[</span><span class="n">k</span><span class="o">];</span>
+    <span class="k">for</span> <span class="o">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">k</span><span class="o">;</span> <span class="n">i</span><span class="o">++)</span> <span class="o">{</span>
+      <span class="n">transfers</span><span class="o">[</span><span class="n">i</span><span class="o">]</span> <span class="o">=</span> <span class="nc">DBIDUtil</span><span class="o">.</span><span class="na">newArray</span><span class="o">();</span>
+    <span class="o">}</span></code></pre></figure>
+<p>and can now finally start with the main iteration loop. If <code class="language-plaintext highlighter-rouge">maxiter</code> is set to <code class="language-plaintext highlighter-rouge">-1</code> we will be performing an infinite number of iterations, otherwise at most <code class="language-plaintext highlighter-rouge">maxiter</code> iterations. We then call the helper function above to update the distances and sort the objects by their <code class="language-plaintext highlighter-rouge">Meta.priority</code>. The <code class="language-plaintext highlighter-rouge">active</code> counter will be used to detect convergence.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="nc">DBIDArrayIter</span> <span class="n">id</span> <span class="o">=</span> <span class="n">tids</span><span class="o">.</span><span class="na">iter</span><span class="o">();</span> <span class="c1">// Will be used below</span>
+    <span class="k">for</span> <span class="o">(</span><span class="kt">int</span> <span class="n">iter</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span> <span class="n">maxiter</span> <span class="o">&lt;</span> <span class="mi">0</span> <span class="o">||</span> <span class="n">iter</span> <span class="o">&lt;</span> <span class="n">maxiter</span><span class="o">;</span> <span class="n">iter</span><span class="o">++)</span> <span class="o">{</span>
+      <span class="n">updateDistances</span><span class="o">(</span><span class="n">relation</span><span class="o">,</span> <span class="n">means</span><span class="o">,</span> <span class="n">metas</span><span class="o">,</span> <span class="n">df</span><span class="o">);</span>
+      <span class="n">tids</span><span class="o">.</span><span class="na">sort</span><span class="o">(</span><span class="n">comp</span><span class="o">);</span>
+      <span class="kt">int</span> <span class="n">active</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span> <span class="c1">// Track if anything has changed</span></code></pre></figure>
+<p>We now iterate over the data set and get the metadata. We now use the second comparator to sort the clusters numbers in <code class="language-plaintext highlighter-rouge">preferences</code> by their distance to the current object and then iterate over each target cluster.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">      <span class="k">for</span> <span class="o">(</span><span class="n">id</span><span class="o">.</span><span class="na">seek</span><span class="o">(</span><span class="mi">0</span><span class="o">);</span> <span class="n">id</span><span class="o">.</span><span class="na">valid</span><span class="o">();</span> <span class="n">id</span><span class="o">.</span><span class="na">advance</span><span class="o">())</span> <span class="o">{</span>
+        <span class="nc">Meta</span> <span class="n">c</span> <span class="o">=</span> <span class="n">metas</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">id</span><span class="o">);</span>
+        <span class="nc">ModifiableDBIDs</span> <span class="n">source</span> <span class="o">=</span> <span class="n">clusters</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">c</span><span class="o">.</span><span class="na">primary</span><span class="o">);</span>
+        <span class="nc">IntegerArrayQuickSort</span><span class="o">.</span><span class="na">sort</span><span class="o">(</span><span class="n">preferences</span><span class="o">,</span> <span class="n">pcomp</span><span class="o">.</span><span class="na">select</span><span class="o">(</span><span class="n">c</span><span class="o">));</span>
+        <span class="nl">tloop:</span> <span class="k">for</span> <span class="o">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">:</span> <span class="n">preferences</span><span class="o">)</span> <span class="o">{</span>
+          <span class="k">if</span> <span class="o">(</span><span class="n">i</span> <span class="o">==</span> <span class="n">c</span><span class="o">.</span><span class="na">primary</span><span class="o">)</span> <span class="o">{</span>
+            <span class="k">continue</span><span class="o">;</span> <span class="c1">// Cannot transfer to the same cluster!</span>
+          <span class="o">}</span>
+          <span class="nc">ModifiableDBIDs</span> <span class="n">dest</span> <span class="o">=</span> <span class="n">clusters</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">i</span><span class="o">);</span></code></pre></figure>
+<p>First of all we try to find a waiting transfer partner. The actual transfer will be done by the method <code class="language-plaintext highlighter-rouge">transfer</code> explained below. Also note that we see yet another iterator variant: <code class="language-plaintext highlighter-rouge">DBIDMIter</code> is a modifiable iterator - it also has a <code class="language-plaintext highlighter-rouge">remove</code> method, which we need this time.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">          <span class="c1">// Can we pair this transfer?</span>
+          <span class="k">for</span> <span class="o">(</span><span class="nc">DBIDMIter</span> <span class="n">other</span> <span class="o">=</span> <span class="n">transfers</span><span class="o">[</span><span class="n">i</span><span class="o">].</span><span class="na">iter</span><span class="o">();</span> <span class="n">other</span><span class="o">.</span><span class="na">valid</span><span class="o">();</span> <span class="n">other</span><span class="o">.</span><span class="na">advance</span><span class="o">())</span> <span class="o">{</span>
+            <span class="nc">Meta</span> <span class="n">c2</span> <span class="o">=</span> <span class="n">metas</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">other</span><span class="o">);</span>
+            <span class="k">if</span> <span class="o">(</span><span class="n">c</span><span class="o">.</span><span class="na">gain</span><span class="o">(</span><span class="n">i</span><span class="o">)</span> <span class="o">+</span> <span class="n">c2</span><span class="o">.</span><span class="na">gain</span><span class="o">(</span><span class="n">c</span><span class="o">.</span><span class="na">primary</span><span class="o">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="o">)</span> <span class="o">{</span>
+              <span class="n">transfer</span><span class="o">(</span><span class="n">metas</span><span class="o">,</span> <span class="n">c2</span><span class="o">,</span> <span class="n">dest</span><span class="o">,</span> <span class="n">source</span><span class="o">,</span> <span class="n">other</span><span class="o">,</span> <span class="n">c</span><span class="o">.</span><span class="na">primary</span><span class="o">);</span>
+              <span class="n">transfer</span><span class="o">(</span><span class="n">metas</span><span class="o">,</span> <span class="n">c</span><span class="o">,</span> <span class="n">source</span><span class="o">,</span> <span class="n">dest</span><span class="o">,</span> <span class="n">id</span><span class="o">,</span> <span class="n">i</span><span class="o">);</span>
+              <span class="n">active</span> <span class="o">+=</span> <span class="mi">2</span><span class="o">;</span>
+              <span class="n">other</span><span class="o">.</span><span class="na">remove</span><span class="o">();</span> <span class="c1">// last, as this invalides the reference!</span>
+              <span class="n">source</span> <span class="o">=</span> <span class="n">dest</span><span class="o">;</span> <span class="c1">// We are assigned here now.</span>
+              <span class="k">continue</span> <span class="n">tloop</span><span class="o">;</span>
+            <span class="o">}</span>
+          <span class="o">}</span></code></pre></figure>
+<p>Even if we do not have a transfer partner, we might be able to move the object: if the number of elements was not divisible by <code class="language-plaintext highlighter-rouge">k</code> it may be possible to move single objects instead of swapping two objects.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">          <span class="c1">// If cluster sizes allow, move a single object.</span>
+          <span class="k">if</span> <span class="o">(</span><span class="n">c</span><span class="o">.</span><span class="na">gain</span><span class="o">(</span><span class="n">i</span><span class="o">)</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="o">&amp;&amp;</span> <span class="o">(</span><span class="n">dest</span><span class="o">.</span><span class="na">size</span><span class="o">()</span> <span class="o">&lt;</span> <span class="n">maxsize</span> <span class="o">&amp;&amp;</span> <span class="n">source</span><span class="o">.</span><span class="na">size</span><span class="o">()</span> <span class="o">&gt;</span> <span class="n">minsize</span><span class="o">))</span> <span class="o">{</span>
+            <span class="n">transfer</span><span class="o">(</span><span class="n">metas</span><span class="o">,</span> <span class="n">c</span><span class="o">,</span> <span class="n">source</span><span class="o">,</span> <span class="n">dest</span><span class="o">,</span> <span class="n">id</span><span class="o">,</span> <span class="n">i</span><span class="o">);</span>
+            <span class="n">active</span> <span class="o">+=</span> <span class="mi">1</span><span class="o">;</span>
+            <span class="n">source</span> <span class="o">=</span> <span class="n">dest</span><span class="o">;</span> <span class="c1">// We are assigned here now.</span>
+            <span class="k">continue</span> <span class="n">tloop</span><span class="o">;</span>
+          <span class="o">}</span>
+        <span class="o">}</span></code></pre></figure>
+<p>Finally, if the object could not be transferred but isn’t in the optimal cluster, we store it in the appropriate transfer list:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">        <span class="c1">// If the object would prefer a different cluster, put in outgoing</span>
+        <span class="c1">// transfer list.</span>
+        <span class="k">if</span> <span class="o">(</span><span class="n">c</span><span class="o">.</span><span class="na">primary</span> <span class="o">!=</span> <span class="n">preferences</span><span class="o">[</span><span class="mi">0</span><span class="o">]</span> <span class="o">&amp;&amp;</span> <span class="n">c</span><span class="o">.</span><span class="na">dists</span><span class="o">[</span><span class="n">c</span><span class="o">.</span><span class="na">primary</span><span class="o">]</span> <span class="o">&gt;</span> <span class="n">c</span><span class="o">.</span><span class="na">dists</span><span class="o">[</span><span class="n">preferences</span><span class="o">[</span><span class="mi">0</span><span class="o">]])</span> <span class="o">{</span>
+          <span class="n">transfers</span><span class="o">[</span><span class="n">c</span><span class="o">.</span><span class="na">primary</span><span class="o">].</span><span class="na">add</span><span class="o">(</span><span class="n">id</span><span class="o">);</span>
+        <span class="o">}</span></code></pre></figure>
+<p>Someone might come up with a good way of finding additional transfers. But otherwise, we need to clear these lists for the next iteration. We can also log the progress of our algorithm.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">      <span class="o">}</span>
+      <span class="c1">// TODO: try to get more transfers out of the transfer lists done by</span>
+      <span class="c1">// considering more than one object?</span>
+      <span class="kt">int</span> <span class="n">pending</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span>
+      <span class="c1">// Clear transfer lists for next iteration.</span>
+      <span class="k">for</span> <span class="o">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">k</span><span class="o">;</span> <span class="n">i</span><span class="o">++)</span> <span class="o">{</span>
+        <span class="n">pending</span> <span class="o">+=</span> <span class="n">transfers</span><span class="o">[</span><span class="n">i</span><span class="o">].</span><span class="na">size</span><span class="o">();</span>
+        <span class="n">transfers</span><span class="o">[</span><span class="n">i</span><span class="o">].</span><span class="na">clear</span><span class="o">();</span>
+      <span class="o">}</span>
+      <span class="k">if</span> <span class="o">(</span><span class="no">LOG</span><span class="o">.</span><span class="na">isDebuggingFine</span><span class="o">())</span> <span class="o">{</span>
+        <span class="no">LOG</span><span class="o">.</span><span class="na">debugFine</span><span class="o">(</span><span class="s">"Performed "</span> <span class="o">+</span> <span class="n">active</span> <span class="o">+</span> <span class="s">" transfers in iteration "</span> <span class="o">+</span> <span class="n">iter</span> <span class="o">+</span> <span class="s">" skipped "</span> <span class="o">+</span> <span class="n">pending</span><span class="o">);</span>
+      <span class="o">}</span></code></pre></figure>
+<p>Finally, if no transfers were done we can break the main iteration loop. If however any change was performed, we need to update the means again.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">      <span class="k">if</span> <span class="o">(</span><span class="n">active</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="o">)</span> <span class="o">{</span>
+        <span class="k">break</span><span class="o">;</span>
+      <span class="o">}</span>
+      <span class="c1">// Recompute means after reassignment</span>
+      <span class="n">means</span> <span class="o">=</span> <span class="n">means</span><span class="o">(</span><span class="n">clusters</span><span class="o">,</span> <span class="n">means</span><span class="o">,</span> <span class="n">relation</span><span class="o">);</span>
+    <span class="o">}</span>
+    <span class="k">return</span> <span class="n">means</span><span class="o">;</span>
+  <span class="o">}</span></code></pre></figure>
+<p>In the code above two parts were not yet introduced. The first is the comparator for sorting the cluster preferences. This is fairly standard code, except that we are using an <code class="language-plaintext highlighter-rouge">IntegerComparator</code> instead of a <code class="language-plaintext highlighter-rouge">Comparator&lt;Integer&gt;</code> from the Java collections framework. By avoiding <code class="language-plaintext highlighter-rouge">Integer</code> objects and using primitive <code class="language-plaintext highlighter-rouge">int</code>s instead we reduce memory use and improve performance. This isn’t crucial here, but we might as well just use it. The <code class="language-plaintext highlighter-rouge">select</code> method also serves the purpose that we can use this comparator for different objects instead of creating a fresh one for each <code class="language-plaintext highlighter-rouge">Meta</code>.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="kd">public</span> <span class="kd">class</span> <span class="nc">PreferenceComparator</span> <span class="kd">implements</span> <span class="nc">IntegerComparator</span> <span class="o">{</span>
+    <span class="nc">Meta</span> <span class="n">c</span> <span class="o">=</span> <span class="kc">null</span><span class="o">;</span>
+
+    <span class="nd">@Override</span>
+    <span class="kd">public</span> <span class="kt">int</span> <span class="nf">compare</span><span class="o">(</span><span class="kt">int</span> <span class="n">o1</span><span class="o">,</span> <span class="kt">int</span> <span class="n">o2</span><span class="o">)</span> <span class="o">{</span>
+      <span class="k">return</span> <span class="nc">Double</span><span class="o">.</span><span class="na">compare</span><span class="o">(</span><span class="n">c</span><span class="o">.</span><span class="na">dists</span><span class="o">[</span><span class="n">o1</span><span class="o">],</span> <span class="n">c</span><span class="o">.</span><span class="na">dists</span><span class="o">[</span><span class="n">o2</span><span class="o">]);</span>
+    <span class="o">}</span>
+
+    <span class="cm">/**
+     * Set the meta to sort by
+     * 
+     * @param c Meta to sort by
+     * @return The comparator
+     */</span>
+    <span class="kd">public</span> <span class="nc">IntegerComparator</span> <span class="nf">select</span><span class="o">(</span><span class="nc">Meta</span> <span class="n">c</span><span class="o">)</span> <span class="o">{</span>
+      <span class="k">this</span><span class="o">.</span><span class="na">c</span> <span class="o">=</span> <span class="n">c</span><span class="o">;</span>
+      <span class="k">return</span> <span class="k">this</span><span class="o">;</span>
+    <span class="o">}</span>
+  <span class="o">}</span></code></pre></figure>
+<p>and the second is the <code class="language-plaintext highlighter-rouge">transfer</code> function to update the data structures:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="kd">protected</span> <span class="kt">void</span> <span class="nf">transfer</span><span class="o">(</span><span class="kd">final</span> <span class="nc">WritableDataStore</span><span class="o">&lt;</span><span class="nc">Meta</span><span class="o">&gt;</span> <span class="n">metas</span><span class="o">,</span> <span class="nc">Meta</span> <span class="n">meta</span><span class="o">,</span>
+        <span class="nc">ModifiableDBIDs</span> <span class="n">src</span><span class="o">,</span> <span class="nc">ModifiableDBIDs</span> <span class="n">dst</span><span class="o">,</span> <span class="nc">DBIDRef</span> <span class="n">id</span><span class="o">,</span> <span class="nc">Integer</span> <span class="n">dstnum</span><span class="o">)</span> <span class="o">{</span>
+    <span class="n">src</span><span class="o">.</span><span class="na">remove</span><span class="o">(</span><span class="n">id</span><span class="o">);</span>
+    <span class="n">dst</span><span class="o">.</span><span class="na">add</span><span class="o">(</span><span class="n">id</span><span class="o">);</span>
+    <span class="n">meta</span><span class="o">.</span><span class="na">primary</span> <span class="o">=</span> <span class="n">dstnum</span><span class="o">;</span>
+    <span class="n">metas</span><span class="o">.</span><span class="na">put</span><span class="o">(</span><span class="n">id</span><span class="o">,</span> <span class="n">meta</span><span class="o">);</span> <span class="c1">// Make sure the storage is up to date.</span>
+  <span class="o">}</span></code></pre></figure>
+<h2 id="implementing-the-algorithm-outline">Implementing the algorithm outline</h2>
+<p>We have now seen all the main parts of the algorithm, and only need to put these pieces together to the final <code class="language-plaintext highlighter-rouge">run</code> method:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="kd">public</span> <span class="nc">Clustering</span><span class="o">&lt;</span><span class="nc">MeanModel</span><span class="o">&gt;</span> <span class="nf">run</span><span class="o">(</span><span class="nc">Database</span> <span class="n">database</span><span class="o">,</span> <span class="nc">Relation</span><span class="o">&lt;</span><span class="no">V</span><span class="o">&gt;</span> <span class="n">relation</span><span class="o">)</span> <span class="o">{</span>
+    <span class="c1">// Database objects to process</span>
+    <span class="kd">final</span> <span class="nc">DBIDs</span> <span class="n">ids</span> <span class="o">=</span> <span class="n">relation</span><span class="o">.</span><span class="na">getDBIDs</span><span class="o">();</span>
+    <span class="c1">// Choose initial means</span>
+    <span class="kt">double</span><span class="o">[][]</span> <span class="n">means</span> <span class="o">=</span> <span class="n">initializer</span><span class="o">.</span><span class="na">chooseInitialMeans</span><span class="o">(</span><span class="n">relation</span><span class="o">,</span> <span class="n">k</span><span class="o">,</span> <span class="n">getDistanceFunction</span><span class="o">());</span>
+    <span class="c1">// Setup cluster assignment store</span>
+    <span class="nc">List</span><span class="o">&lt;</span><span class="nc">ModifiableDBIDs</span><span class="o">&gt;</span> <span class="n">clusters</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">ArrayList</span><span class="o">&lt;</span><span class="nc">ModifiableDBIDs</span><span class="o">&gt;();</span>
+    <span class="k">for</span> <span class="o">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">k</span><span class="o">;</span> <span class="n">i</span><span class="o">++)</span> <span class="o">{</span>
+      <span class="n">clusters</span><span class="o">.</span><span class="na">add</span><span class="o">(</span><span class="nc">DBIDUtil</span><span class="o">.</span><span class="na">newHashSet</span><span class="o">(</span><span class="n">relation</span><span class="o">.</span><span class="na">size</span><span class="o">()</span> <span class="o">/</span> <span class="n">k</span> <span class="o">+</span> <span class="mi">2</span><span class="o">));</span>
+    <span class="o">}</span>
+
+    <span class="c1">// Meta data storage</span>
+    <span class="kd">final</span> <span class="nc">WritableDataStore</span><span class="o">&lt;</span><span class="nc">Meta</span><span class="o">&gt;</span> <span class="n">metas</span> <span class="o">=</span> <span class="n">initializeMeta</span><span class="o">(</span><span class="n">relation</span><span class="o">,</span> <span class="n">means</span><span class="o">);</span>
+    <span class="c1">// Perform the initial assignment</span>
+    <span class="nc">ArrayModifiableDBIDs</span> <span class="n">tids</span> <span class="o">=</span> <span class="n">initialAssignment</span><span class="o">(</span><span class="n">clusters</span><span class="o">,</span> <span class="n">metas</span><span class="o">,</span> <span class="n">ids</span><span class="o">);</span>
+    <span class="c1">// Recompute the means after the initial assignment</span>
+    <span class="n">means</span> <span class="o">=</span> <span class="n">means</span><span class="o">(</span><span class="n">clusters</span><span class="o">,</span> <span class="n">means</span><span class="o">,</span> <span class="n">relation</span><span class="o">);</span>
+    <span class="c1">// Refine the result via k-means like iterations</span>
+    <span class="n">means</span> <span class="o">=</span> <span class="n">refineResult</span><span class="o">(</span><span class="n">relation</span><span class="o">,</span> <span class="n">means</span><span class="o">,</span> <span class="n">clusters</span><span class="o">,</span> <span class="n">metas</span><span class="o">,</span> <span class="n">tids</span><span class="o">);</span></code></pre></figure>
+<p>Don’t mind the odd signature of <code class="language-plaintext highlighter-rouge">initializer.chooseInitialMeans</code>. The reason for this is that we want to allow <em>both</em> random generated means, samples from the database, optimized means as produced by k-means++ etc. - for now, we will only need them to be “numerical vectors of some kind”, which is what this type says.</p>
+<p>The main thing we have not seen yet is how to package the final result for the ELKI framework. As we want the visualization and evaluation procedures to be able to use our result, we need to wrap it in the appropriate classes. The outer class is <a href="/releases/current/doc/de/lmu/ifi/dbs/elki/data/Clustering.html">Clustering</a>, and represents the result as a whole. We then need to produce the individual <a href="/releases/current/doc/de/lmu/ifi/dbs/elki/data/Cluster.html">Cluster</a> objects. In ELKI, each cluster has a <a href="/releases/current/doc/de/lmu/ifi/dbs/elki/data/model/Model.html">Model</a>, in our case the model will store the cluster mean.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="c1">// Wrap result</span>
+    <span class="nc">Clustering</span><span class="o">&lt;</span><span class="nc">MeanModel</span><span class="o">&gt;</span> <span class="n">result</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">Clustering</span><span class="o">&lt;</span><span class="nc">MeanModel</span><span class="o">&gt;(</span><span class="s">"k-Means Samesize Clustering"</span><span class="o">,</span>
+      <span class="s">"kmeans-samesize-clustering"</span><span class="o">);</span>
+    <span class="k">for</span> <span class="o">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">clusters</span><span class="o">.</span><span class="na">size</span><span class="o">();</span> <span class="n">i</span><span class="o">++)</span> <span class="o">{</span>
+      <span class="n">result</span><span class="o">.</span><span class="na">addToplevelCluster</span><span class="o">(</span><span class="k">new</span> <span class="nc">Cluster</span><span class="o">&lt;&gt;(</span><span class="n">clusters</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">i</span><span class="o">),</span> <span class="k">new</span> <span class="nc">MeanModel</span><span class="o">(</span><span class="n">means</span><span class="o">[</span><span class="n">i</span><span class="o">])));</span>
+    <span class="o">}</span>
+    <span class="k">return</span> <span class="n">result</span><span class="o">;</span>
+  <span class="o">}</span></code></pre></figure>
+<h2 id="adding-a-parameterizer">Adding a parameterizer</h2>
+<p>Now in order to <em>run</em> the algorithm we could call the constructor above, produce a database and so on. Or we can let ELKI handle all the set up, and for example use the MiniGUI or command line. For this, we need to formally specify the parameters. Here, we have four parameters: the desired number of clusters <code class="language-plaintext highlighter-rouge">k</code>, the maximum number of iterations <code class="language-plaintext highlighter-rouge">maxiter</code>, the initialization method <code class="language-plaintext highlighter-rouge">initializer</code> and the distance function <code class="language-plaintext highlighter-rouge">distanceFunction</code>.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="kd">public</span> <span class="kd">static</span> <span class="kd">class</span> <span class="nc">Parameterizer</span><span class="o">&lt;</span><span class="no">V</span> <span class="kd">extends</span> <span class="nc">NumberVector</span><span class="o">&gt;</span>
+      <span class="kd">extends</span> <span class="nc">AbstractParameterizer</span> <span class="o">{</span>
+    <span class="cm">/**
+     * k Parameter.
+     */</span>
+    <span class="kd">protected</span> <span class="kt">int</span> <span class="n">k</span><span class="o">;</span>
+
+    <span class="cm">/**
+     * Number of iterations.
+     */</span>
+    <span class="kd">protected</span> <span class="kt">int</span> <span class="n">maxiter</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="o">;</span>
+
+    <span class="cm">/**
+     * Initialization method.
+     */</span>
+    <span class="kd">protected</span> <span class="nc">KMeansInitialization</span><span class="o">&lt;</span><span class="no">V</span><span class="o">&gt;</span> <span class="n">initializer</span><span class="o">;</span>
+
+    <span class="cm">/**
+     * Distance function
+     */</span>
+    <span class="kd">protected</span> <span class="nc">NumberVectorDistanceFunction</span><span class="o">&lt;?</span> <span class="kd">super</span> <span class="nc">NumberVector</span><span class="o">&gt;</span> <span class="n">distanceFunction</span><span class="o">;</span></code></pre></figure>
+<p>To specify parameters, we need to override the method <code class="language-plaintext highlighter-rouge">makeOptions</code>. First we will get the distance function. While the k-means algorithm is actually only designed for squared Euclidean distance (or Euclidean), some user might want to try different distances (be careful with this though: if the mean is not reducing distances, the algorithm might no longer converge!).</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="nd">@Override</span>
+    <span class="kd">protected</span> <span class="kt">void</span> <span class="nf">makeOptions</span><span class="o">(</span><span class="nc">Parameterization</span> <span class="n">config</span><span class="o">)</span> <span class="o">{</span>
+      <span class="kd">super</span><span class="o">.</span><span class="na">makeOptions</span><span class="o">(</span><span class="n">config</span><span class="o">);</span>
+      <span class="nc">ObjectParameter</span><span class="o">&lt;</span><span class="nc">NumberVectorDistanceFunction</span><span class="o">&lt;?</span> <span class="kd">super</span> <span class="no">V</span><span class="o">&gt;&gt;</span> <span class="n">distanceFunctionP</span> <span class="o">=</span> 
+          <span class="n">makeParameterDistanceFunction</span><span class="o">(</span><span class="nc">SquaredEuclideanDistanceFunction</span><span class="o">.</span><span class="na">class</span><span class="o">,</span>
+          <span class="nc">NumberVectorDistanceFunction</span><span class="o">.</span><span class="na">class</span><span class="o">);</span>
+      <span class="k">if</span> <span class="o">(</span><span class="n">config</span><span class="o">.</span><span class="na">grab</span><span class="o">(</span><span class="n">distanceFunctionP</span><span class="o">))</span> <span class="o">{</span>
+        <span class="n">distanceFunction</span> <span class="o">=</span> <span class="n">distanceFunctionP</span><span class="o">.</span><span class="na">instantiateClass</span><span class="o">(</span><span class="n">config</span><span class="o">);</span>
+        <span class="k">if</span> <span class="o">(!(</span><span class="n">distanceFunction</span> <span class="k">instanceof</span> <span class="nc">EuclideanDistanceFunction</span><span class="o">)</span>
+            <span class="o">&amp;&amp;</span> <span class="o">!(</span><span class="n">distanceFunction</span> <span class="k">instanceof</span> <span class="nc">SquaredEuclideanDistanceFunction</span><span class="o">))</span> <span class="o">{</span>
+          <span class="no">LOG</span><span class="o">.</span><span class="na">warning</span><span class="o">(</span><span class="s">"k-means optimizes the sum of squares - it should be used "</span><span class="o">+</span>
+            <span class="s">"with squared euclidean distance and may stop converging otherwise!"</span><span class="o">);</span>
+        <span class="o">}</span>
+      <span class="o">}</span></code></pre></figure>
+<p>The next parameter is the number of clusters. It must be greater than 1 to make sense, so we add a constraint.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">      <span class="nc">IntParameter</span> <span class="n">kP</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">IntParameter</span><span class="o">(</span><span class="no">K_ID</span><span class="o">);</span>
+      <span class="n">kP</span><span class="o">.</span><span class="na">addConstraint</span><span class="o">(</span><span class="nc">CommonConstraints</span><span class="o">.</span><span class="na">GREATER_THAN_ONE_INT</span><span class="o">);</span>
+      <span class="k">if</span> <span class="o">(</span><span class="n">config</span><span class="o">.</span><span class="na">grab</span><span class="o">(</span><span class="n">kP</span><span class="o">))</span> <span class="o">{</span>
+        <span class="n">k</span> <span class="o">=</span> <span class="n">kP</span><span class="o">.</span><span class="na">getValue</span><span class="o">();</span>
+      <span class="o">}</span></code></pre></figure>
+<p>Then we need an initialization method. As we rely on the initialization to be good, we set the default to be the k-means++ initialization method.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">      <span class="nc">ObjectParameter</span><span class="o">&lt;</span><span class="nc">KMeansInitialization</span><span class="o">&lt;</span><span class="no">V</span><span class="o">&gt;&gt;</span> <span class="n">initialP</span> <span class="o">=</span>
+          <span class="k">new</span> <span class="nc">ObjectParameter</span><span class="o">&lt;</span><span class="nc">KMeansInitialization</span><span class="o">&lt;</span><span class="no">V</span><span class="o">&gt;&gt;(</span><span class="no">INIT_ID</span><span class="o">,</span>
+          <span class="nc">KMeansInitialization</span><span class="o">.</span><span class="na">class</span><span class="o">,</span> <span class="nc">KMeansPlusPlusInitialMeans</span><span class="o">.</span><span class="na">class</span><span class="o">);</span>
+      <span class="k">if</span> <span class="o">(</span><span class="n">config</span><span class="o">.</span><span class="na">grab</span><span class="o">(</span><span class="n">initialP</span><span class="o">))</span> <span class="o">{</span>
+        <span class="n">initializer</span> <span class="o">=</span> <span class="n">initialP</span><span class="o">.</span><span class="na">instantiateClass</span><span class="o">(</span><span class="n">config</span><span class="o">);</span>
+      <span class="o">}</span></code></pre></figure>
+<p>Finally, we have the optional parameter with the maximum number of iterations. As default value we use <code class="language-plaintext highlighter-rouge">-1</code>, so it iterates until convergence.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">      <span class="nc">IntParameter</span> <span class="n">maxiterP</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">IntParameter</span><span class="o">(</span><span class="no">MAXITER_ID</span><span class="o">,</span> <span class="o">-</span><span class="mi">1</span><span class="o">);</span>
+      <span class="n">maxiterP</span><span class="o">.</span><span class="na">addConstraint</span><span class="o">(</span><span class="nc">CommonConstraints</span><span class="o">.</span><span class="na">GREATER_EQUAL_MINUSONE_INT</span><span class="o">);</span>
+      <span class="k">if</span> <span class="o">(</span><span class="n">config</span><span class="o">.</span><span class="na">grab</span><span class="o">(</span><span class="n">maxiterP</span><span class="o">))</span> <span class="o">{</span>
+        <span class="n">maxiter</span> <span class="o">=</span> <span class="n">maxiterP</span><span class="o">.</span><span class="na">intValue</span><span class="o">();</span>
+      <span class="o">}</span>
+    <span class="o">}</span></code></pre></figure>
+<p>Now we need to map these parameters to the constructor, which is straightforward:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="nd">@Override</span>
+    <span class="kd">protected</span> <span class="nc">SameSizeKMeansAlgorithm</span><span class="o">&lt;</span><span class="no">V</span><span class="o">&gt;</span> <span class="nf">makeInstance</span><span class="o">()</span> <span class="o">{</span>
+      <span class="k">return</span> <span class="k">new</span> <span class="nc">SameSizeKMeansAlgorithm</span><span class="o">&lt;</span><span class="no">V</span><span class="o">&gt;(</span><span class="n">distanceFunction</span><span class="o">,</span> <span class="n">k</span><span class="o">,</span> <span class="n">maxiter</span><span class="o">,</span> <span class="n">initializer</span><span class="o">);</span>
+    <span class="o">}</span>
+  <span class="o">}</span></code></pre></figure>
+<h2 id="putting-it-all-together">Putting it all together</h2>
+<p>The complete source can be found here: <a href="https://github.com/elki-project/elki/blob/master/addons/tutorial/src/main/java/tutorial/clustering/SameSizeKMeans.java">SameSizeKMeansAlgorithm.java</a></p>
+<p>It is included in the <code class="language-plaintext highlighter-rouge">elki-tutorial</code> addon module for you to try out.</p>
+<h2 id="running-the-algorithm">Running the algorithm</h2>
+<p>We can now launch the MiniGUI and run the algorithm from the user interface:</p>
+<p><img src="/tutorial/minigui.png" alt="" /></p>
+<p>You can see the paramters we just defined show up: k must be set, while the others have default values.</p>
+<p>Running it on the mouse data set with k=3 will produce a result like this:</p>
+<p><img src="/tutorial/kms1.png" alt="" /></p>
+<p>while setting k=5 gives a more intuitive result, in particular if we merge the inner three clusters.</p>
+<p><img src="/tutorial/kms2.png" alt="" /></p>
+<p>You can clearly see that we achieved our objective of producing equally sized clusters. And we never promised you that this tutorial algorithm would be useful in practise on a real data set. In reality, clusters will rarely have always the same size. But if you happen to find a situation where this algorithm works well for you, we would be happy to hear!</p>
+</article>
+</div>
+<aside class="sidebar" id="nav">
+ <div class="elk"><a href="/"><img src="/img/elk200.png" alt="ELKI Data Mining"></a></div>
+ <h1><a href="/">ELKI&nbsp;Data&nbsp;Mining</a></h1>
+ <nav>
+    <a class="item" href="/releases/">Releases</a>
+    <a class="item" href="/license">AGPLv3 License</a>
+    <a class="item" href="/howto/">How To Do ...</a>
+    <a class="item" href="/dev/">Development</a>
+    <a class="item" href="/tutorial/">Tutorials</a>
+      <a class="subitem" href="/tutorial/distance_functions">Custom Distance</a>
+      <a class="subitem" href="/tutorial/outlier">Outlier Detection</a>
+      <a class="subitem active" href="/tutorial/same-size_k_means">Same-Size K-Means</a>
+      <a class="subitem" href="/tutorial/hierarchical_clustering">Implementing HAC</a>
+      <a class="subitem" href="/tutorial/result_handler">Result Handlers</a>
+      <a class="subitem" href="/tutorial/spatial_distance_functions">Spatial Distance Functions</a>
+      <a class="subitem" href="/tutorial/outlier_ODIN">Implementing ODIN</a>
+      <a class="subitem" href="/tutorial/cfsfdp">Implementing CFSFDP</a>
+    <a class="item" href="/algorithms/">Algorithms</a>
+    <a class="item" href="/examples/">Examples</a>
+    <a class="item" href="/faq">FAQ</a>
+    <a class="item" href="/datasets/">Data sets</a>
+    <a class="item" href="/benchmarking">Benchmarking</a>
+    <a class="item" href="/publications">Publications</a>
+    <a class="item" href="/team">ELKI Team</a>
+    <span class="item" style="margin-top: 1em"><a href="https://github.com/elki-project/elki"><span class="icon icon--github"><svg viewBox="0 0 16 16"><path fill="#828282" d="M7.999,0.431c-4.285,0-7.76,3.474-7.76,7.761 c0,3.428,2.223,6.337,5.307,7.363c0.388,0.071,0.53-0.168,0.53-0.374c0-0.184-0.007-0.672-0.01-1.32 c-2.159,0.469-2.614-1.04-2.614-1.04c-0.353-0.896-0.862-1.135-0.862-1.135c-0.705-0.481,0.053-0.472,0.053-0.472 c0.779,0.055,1.189,0.8,1.189,0.8c0.692,1.186,1.816,0.843,2.258,0.645c0.071-0.502,0.271-0.843,0.493-1.037 C4.86,11.425,3.049,10.76,3.049,7.786c0-0.847,0.302-1.54,0.799-2.082C3.768,5.507,3.501,4.718,3.924,3.65 c0,0,0.652-0.209,2.134,0.796C6.677,4.273,7.34,4.187,8,4.184c0.659,0.003,1.323,0.089,1.943,0.261 c1.482-1.004,2.132-0.796,2.132-0.796c0.423,1.068,0.157,1.857,0.077,2.054c0.497,0.542,0.798,1.235,0.798,2.082 c0,2.981-1.814,3.637-3.543,3.829c0.279,0.24,0.527,0.713,0.527,1.437c0,1.037-0.01,1.874-0.01,2.129 c0,0.208,0.14,0.449,0.534,0.373c3.081-1.028,5.302-3.935,5.302-7.362C15.76,3.906,12.285,0.431,7.999,0.431z"/></svg>
+</span> elki-project</a> on GitHub</span>
+ </nav>
+  <a href="#nav" class="navelk"><img src="/img/elk200.png" alt="Go to navigation"></a>
+</aside>
+<script src="/js/maillink.js" type="text/javascript"></script>
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-87792924-1"></script>
+<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);};if(!window['ga-disable-UA-87792924-1']){gtag('js',new Date());gtag('config','UA-87792924-1',{'anonymize_ip':true})}</script>
+</body>
+</html>

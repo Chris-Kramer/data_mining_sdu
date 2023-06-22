@@ -1,0 +1,5 @@
+"0","one_dim <- function(x,y)"
+"0","	abs(x-y)^2"
+"0",""
+"0","two_dim <- function(x,y,z,d)"
+"0","	(abs(x-y)^2)+(abs(z-d)^2)"

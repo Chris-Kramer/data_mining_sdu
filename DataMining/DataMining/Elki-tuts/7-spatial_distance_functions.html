@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html>
+<head>
+ <meta charset="utf-8">
+ <title>Spatial Distance Functions</title>
+ <meta name="description" content="Open-Source Data Mining with Java.">
+ <meta http-equiv="X-UA-Compatible" content="IE=edge">
+ <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/css/main.css">
+<link href="//fonts.googleapis.com/css?family=Inconsolata%7CSource+Sans+Pro" rel="stylesheet">
+<link rel="canonical" href="http://elki-project.github.io/tutorial/spatial_distance_functions">
+<link rel="shortcut icon" href="/img/favicon.png" type="image/png">
+<link rel="stylesheet" type="text/css" href="//cdnjs.cloudflare.com/ajax/libs/cookieconsent2/3.0.3/cookieconsent.min.css" />
+  <script src="//cdnjs.cloudflare.com/ajax/libs/cookieconsent2/3.0.3/cookieconsent.min.js"></script>
+  <script>window["denyCookies"]=function(b){window["ga-disable-UA-87792924-1"]=b;}
+window.addEventListener("load",function(){window.cookieconsent.initialise({palette:{popup:{background:"#edeff5",text:"#838391"},button:{background:"#4b81e8"}},theme:"classic",type:"opt-out",content:{message:"This website uses Google Analytics cookies to ensure you get the best experience on our website, and is hosted on GitHub servers outside of our control.",link:"GitHub privacy statement",href:"https://help.github.com/articles/github-privacy-statement/",deny:"Disable Google Analytics"},onInitialise:function(status){window.denyCookies(!this.hasConsented());},onStatusChange:function(status,chosenBefore){window.denyCookies(!this.hasConsented());}})});</script>
+</head>
+<body>
+<div class="content">
+ <article class="post">
+<h1 id="implementing-a-spatial-distance-function">Implementing a spatial distance function</h1>
+<p class="versioninfo">Version information: Updated for ELKI 0.6.5~20141030</p>
+<p>In the tutorial on <a href="distance_functions">distance functions</a> we already implemented a custom, domain-specific distance function.</p>
+<p>In this tutorial, we will implement a textbook distance function, but also extend it to allow <strong>index accelerated</strong> queries.</p>
+<p>The index we focus on is the R-tree, because it is very easy to extend with custom distances. For the M-tree, a distance function must be a <em>metric</em>, i.e. satisfy the triangle inequality. The R-tree does not have such a restriction: it can acclerate non-metrical distance queries, such as squared euclidean distances.</p>
+<p>While here we implement this for a “textbook distance”, you should realize that <strong>these two tutorials can and should be combined</strong>. When implementing a custom distance function, always consider whether you can define such a MBR-MBR lower bound, and this way get R-tree acceleration for your queries.</p>
+<h2 id="bray-curtis-distance">Bray-Curtis distance</h2>
+<p>Bray-curtis dissimilarity (also: Sørensen–Dice coefficient) is a distance function originating from Ecology and Biology. In essence, it is a normalized form of Manhattan distance. While it is commonly applied to presence/absence data, it can also be defined on continuous variables, which is the version we will be using here.</p>
+<p>The continuous formulation of Bray-Curtis for two vectors <code class="language-plaintext highlighter-rouge">x</code> and <code class="language-plaintext highlighter-rouge">y</code> is as follows:</p><pre>
+           sum_i |x_i - y_i|
+d(x,y) = ---------------------
+          sum_i |x_i| + |y_i|
+</pre>
+<p>Often, the absolute value of the denominator is missing, but then it would no longer be a proper dissimilarity function on R<sup>n</sup> either. For nonnegative values, it obviously does not change results, and bray-curtis was originally designed for nonnegative values.</p>
+<p>The numerator obivously is the Manhattan distance, while the denominator is the Manhattan norms of the vectors. So as mentioned above, Bray-Curtis is a normalized form of Manhattan distance.</p>
+<h2 id="implementing-the-distance">Implementing the distance</h2>
+<p>First of all, we will implement the regular distance function. To minimize the amount of work we need to do, we will use the most specific abstract base class: <a href="/releases/current/doc/de/lmu/ifi/dbs/elki/distance/distancefunction/AbstractNumberVectorDistanceFunction.html">AbstractNumberVectorDistanceFunction</a> which is good for distance functions that have continuous numerical vectors as input and return double valued results.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java"><span class="kn">package</span> <span class="nn">tutorial</span><span class="o">;</span>
+
+<span class="kn">import</span> <span class="nn">de.lmu.ifi.dbs.elki.distance.distancefunction.AbstractNumberVectorDistanceFunction</span><span class="o">;</span>
+
+<span class="kd">public</span> <span class="kd">class</span> <span class="nc">BrayCurtisDistanceFunction</span> <span class="kd">extends</span> <span class="nc">AbstractNumberVectorDistanceFunction</span> <span class="o">{</span>
+  <span class="nd">@Override</span>
+  <span class="kd">public</span> <span class="kt">double</span> <span class="nf">distance</span><span class="o">(</span><span class="nc">NumberVector</span> <span class="n">v1</span><span class="o">,</span> <span class="nc">NumberVector</span> <span class="n">v2</span><span class="o">)</span> <span class="o">{</span>
+    <span class="c1">// TODO</span>
+    <span class="k">return</span> <span class="mi">0</span><span class="o">;</span>
+  <span class="o">}</span>
+<span class="o">}</span></code></pre></figure>
+<p>this very simple signature is all that we need to fill. We can pretty much straightforward use the definition above. We add a safety check to ensure vectors have the same dimensionality.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="nd">@Override</span>
+  <span class="kd">public</span> <span class="kt">double</span> <span class="nf">distance</span><span class="o">(</span><span class="nc">NumberVector</span> <span class="n">v1</span><span class="o">,</span> <span class="nc">NumberVector</span> <span class="n">v2</span><span class="o">)</span> <span class="o">{</span>
+    <span class="kd">final</span> <span class="kt">int</span> <span class="n">dim1</span> <span class="o">=</span> <span class="n">v1</span><span class="o">.</span><span class="na">getDimensionality</span><span class="o">();</span>
+    <span class="k">if</span> <span class="o">(</span><span class="n">dim1</span> <span class="o">!=</span> <span class="n">v2</span><span class="o">.</span><span class="na">getDimensionality</span><span class="o">())</span> <span class="o">{</span>
+      <span class="k">throw</span> <span class="k">new</span> <span class="nf">IllegalArgumentException</span><span class="o">(</span><span class="s">"Dimensionalities do not agree!"</span><span class="o">);</span>
+    <span class="o">}</span>
+    <span class="kt">double</span> <span class="n">sumdiff</span> <span class="o">=</span> <span class="mi">0</span><span class="o">.,</span> <span class="n">sumsum</span> <span class="o">=</span> <span class="mi">0</span><span class="o">.;</span>
+    <span class="k">for</span> <span class="o">(</span><span class="kt">int</span> <span class="n">d</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span> <span class="n">d</span> <span class="o">&lt;</span> <span class="n">dim1</span><span class="o">;</span> <span class="n">d</span><span class="o">++)</span> <span class="o">{</span>
+      <span class="kt">double</span> <span class="n">xd</span> <span class="o">=</span> <span class="n">v1</span><span class="o">.</span><span class="na">doubleValue</span><span class="o">(</span><span class="n">d</span><span class="o">),</span> <span class="n">yd</span> <span class="o">=</span> <span class="n">v2</span><span class="o">.</span><span class="na">doubleValue</span><span class="o">(</span><span class="n">d</span><span class="o">);</span>
+      <span class="n">sumdiff</span> <span class="o">+=</span> <span class="nc">Math</span><span class="o">.</span><span class="na">abs</span><span class="o">(</span><span class="n">xd</span> <span class="o">-</span> <span class="n">yd</span><span class="o">);</span>
+      <span class="n">sumsum</span> <span class="o">+=</span> <span class="nc">Math</span><span class="o">.</span><span class="na">abs</span><span class="o">(</span><span class="n">xd</span><span class="o">)</span> <span class="o">+</span> <span class="nc">Math</span><span class="o">.</span><span class="na">abs</span><span class="o">(</span><span class="n">yd</span><span class="o">);</span>
+    <span class="o">}</span>
+    <span class="k">return</span> <span class="n">sumdiff</span> <span class="o">/</span> <span class="n">sumsum</span><span class="o">;</span>
+  <span class="o">}</span></code></pre></figure>
+<p>After implementing this class, we can immediately run our algorithms with it. Since it has an (implicit) public constructor and no parameters, the GUI will automatically add it to its drop down menus.</p>
+<h2 id="support-for-spatial-indexes">Support for spatial indexes</h2>
+<p>In order to accelerate distance based algorithms (e.g. DBSCAN, LOF) using this distance function, we need to implent a <strong>lower-bound on the rectangle-to-rectangle distances</strong>. This is often called the “minDist”. We additionally implement the interface <a href="/releases/current/doc/de/lmu/ifi/dbs/elki/distance/distancefunction/SpatialPrimitiveDistanceFunction.html">SpatialPrimitiveDistanceFunction</a>, and have eclipse generate the missing method. After adding the usual safety checks, it looks like this:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="nd">@Override</span>
+  <span class="kd">public</span> <span class="kt">double</span> <span class="nf">minDist</span><span class="o">(</span><span class="nc">SpatialComparable</span> <span class="n">mbr1</span><span class="o">,</span> <span class="nc">SpatialComparable</span> <span class="n">mbr2</span><span class="o">)</span> <span class="o">{</span>
+    <span class="k">if</span> <span class="o">(</span><span class="n">mbr1</span> <span class="k">instanceof</span> <span class="nc">NumberVector</span> <span class="o">&amp;&amp;</span> <span class="n">mbr2</span> <span class="k">instanceof</span> <span class="nc">NumberVector</span><span class="o">)</span> <span class="o">{</span>
+      <span class="k">return</span> <span class="nf">distance</span><span class="o">((</span><span class="nc">NumberVector</span><span class="o">)</span> <span class="n">mbr1</span><span class="o">,</span> <span class="o">(</span><span class="nc">NumberVector</span><span class="o">)</span> <span class="n">mbr2</span><span class="o">);</span>
+    <span class="o">}</span>
+    <span class="kd">final</span> <span class="kt">int</span> <span class="n">dim1</span> <span class="o">=</span> <span class="n">mbr1</span><span class="o">.</span><span class="na">getDimensionality</span><span class="o">();</span>
+    <span class="k">if</span> <span class="o">(</span><span class="n">dim1</span> <span class="o">!=</span> <span class="n">mbr2</span><span class="o">.</span><span class="na">getDimensionality</span><span class="o">())</span> <span class="o">{</span>
+      <span class="k">throw</span> <span class="k">new</span> <span class="nf">IllegalArgumentException</span><span class="o">(</span><span class="s">"Dimensionalities do not agree!"</span><span class="o">);</span>
+    <span class="o">}</span>
+    <span class="kt">double</span> <span class="n">sumdiff</span> <span class="o">=</span> <span class="mi">0</span><span class="o">.,</span> <span class="n">sumsum</span> <span class="o">=</span> <span class="mi">0</span><span class="o">.;</span>
+    <span class="c1">// TODO: compute lower bound for sumdiff</span>
+    <span class="c1">// TODO: compute upper bound for sumsum</span>
+    <span class="k">return</span> <span class="n">sumdiff</span> <span class="o">/</span> <span class="n">sumsum</span><span class="o">;</span>
+  <span class="o">}</span></code></pre></figure>
+<p>In order to find a lower bound for the equation above, we need a lower bound for the nominator, and an upper bound for the denominator. Fortunately, we can do this in each single dimension independently.</p>
+<p>In a single dimension, the bounding rectangles of the R-tree become intervals: <code class="language-plaintext highlighter-rouge">[min1:max1]</code> and <code class="language-plaintext highlighter-rouge">[min2:max2]</code>. There are three different situations that can arise: the first rectangle can be strictly less than the second (then <code class="language-plaintext highlighter-rouge">max1 &lt; min2</code>), the first rectangle can be strictly larger than the second (then <code class="language-plaintext highlighter-rouge">min1 &gt; max2</code>) or the two rectangles overlap. When they overlap, their minimum distance is 0, otherwise it is the difference of the inequalities we just gave.</p>
+<p>For the upper bound on the lengths, we can exploit that either <code class="language-plaintext highlighter-rouge">-min1</code> or <code class="language-plaintext highlighter-rouge">+max2</code> will have the largest absolute value.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="kt">double</span> <span class="n">sumdiff</span> <span class="o">=</span> <span class="mi">0</span><span class="o">.,</span> <span class="n">sumsum</span> <span class="o">=</span> <span class="mi">0</span><span class="o">.;</span>
+    <span class="k">for</span> <span class="o">(</span><span class="kt">int</span> <span class="n">d</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span> <span class="n">d</span> <span class="o">&lt;</span> <span class="n">dim1</span><span class="o">;</span> <span class="n">d</span><span class="o">++)</span> <span class="o">{</span>
+      <span class="kd">final</span> <span class="kt">double</span> <span class="n">min1</span> <span class="o">=</span> <span class="n">mbr1</span><span class="o">.</span><span class="na">getMin</span><span class="o">(</span><span class="n">d</span><span class="o">),</span> <span class="n">max1</span> <span class="o">=</span> <span class="n">mbr1</span><span class="o">.</span><span class="na">getMax</span><span class="o">(</span><span class="n">d</span><span class="o">);</span>
+      <span class="kd">final</span> <span class="kt">double</span> <span class="n">min2</span> <span class="o">=</span> <span class="n">mbr2</span><span class="o">.</span><span class="na">getMin</span><span class="o">(</span><span class="n">d</span><span class="o">),</span> <span class="n">max2</span> <span class="o">=</span> <span class="n">mbr2</span><span class="o">.</span><span class="na">getMax</span><span class="o">(</span><span class="n">d</span><span class="o">);</span>
+      <span class="k">if</span> <span class="o">(</span><span class="n">max1</span> <span class="o">&lt;</span> <span class="n">min2</span><span class="o">)</span> <span class="o">{</span>
+        <span class="n">sumdiff</span> <span class="o">+=</span> <span class="n">min2</span> <span class="o">-</span> <span class="n">max1</span><span class="o">;</span>
+      <span class="o">}</span> <span class="k">else</span> <span class="k">if</span> <span class="o">(</span><span class="n">min1</span> <span class="o">&gt;</span> <span class="n">max2</span><span class="o">)</span> <span class="o">{</span>
+        <span class="n">sumdiff</span> <span class="o">+=</span> <span class="n">min1</span> <span class="o">-</span> <span class="n">max2</span><span class="o">;</span>
+      <span class="o">}</span> <span class="k">else</span> <span class="o">{</span>
+        <span class="c1">// Minimum difference is 0</span>
+      <span class="o">}</span>
+      <span class="n">sumsum</span> <span class="o">+=</span> <span class="nc">Math</span><span class="o">.</span><span class="na">max</span><span class="o">(-</span><span class="n">min1</span><span class="o">,</span> <span class="n">max1</span><span class="o">)</span> <span class="o">+</span> <span class="nc">Math</span><span class="o">.</span><span class="na">max</span><span class="o">(-</span><span class="n">min2</span><span class="o">,</span> <span class="n">max2</span><span class="o">);</span>
+    <span class="o">}</span>
+    <span class="k">return</span> <span class="n">sumdiff</span> <span class="o">/</span> <span class="n">sumsum</span><span class="o">;</span></code></pre></figure>
+<h2 id="using-index-acceleration">Using index acceleration</h2>
+<p>In order to benefit from this, we need to</p>
+<ol>
+ <li><a href="/howto/use_indexes">Add an R-Tree index to the database</a> via the <code class="language-plaintext highlighter-rouge">-dbc.index</code> parameter</li>
+ <li>Use an algorithm that is implemented by k nearest neighbor or radius queries</li>
+</ol>
+<p>Not every algorithm can be accelerated with an index, but many can such as DBSCAN, OPTICS and LOF. When an appropriate index was added to the database, ELKI will automatically use it wherever possible. So by implementing indexing support for this distance function, we accelerated dozens of algorithms at the same time!</p>
+<h2 id="bonus-elkiification">Bonus ELKIification</h2>
+<p>In order to fully ELKIfy the implementation, we should add a static instance (since this distance function is parameterless) and add a Parameterizer to use the static instance:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="cm">/**
+   * Static instance.
+   */</span>
+  <span class="kd">public</span> <span class="kd">static</span> <span class="kd">final</span> <span class="nc">BrayCurtisDistanceFunction</span> <span class="no">STATIC</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">BrayCurtisDistanceFunction</span><span class="o">();</span>
+
+  <span class="cm">/**
+   * Constructor.
+   * 
+   * @deprecated Use {@link #STATIC} instance instead.
+   */</span>
+  <span class="nd">@Deprecated</span>
+  <span class="kd">public</span> <span class="nf">BrayCurtisDistanceFunction</span><span class="o">()</span> <span class="o">{</span>
+    <span class="kd">super</span><span class="o">();</span>
+  <span class="o">}</span>
+
+  <span class="cm">/**
+   * Parameterization class.
+   */</span>
+  <span class="kd">public</span> <span class="kd">static</span> <span class="kd">class</span> <span class="nc">Parameterizer</span> <span class="kd">extends</span> <span class="nc">AbstractParameterizer</span> <span class="o">{</span>
+    <span class="nd">@Override</span>
+    <span class="kd">protected</span> <span class="nc">BrayCurtisDistanceFunction</span> <span class="nf">makeInstance</span><span class="o">()</span> <span class="o">{</span>
+      <span class="k">return</span> <span class="nc">BrayCurtisDistanceFunction</span><span class="o">.</span><span class="na">STATIC</span><span class="o">;</span>
+    <span class="o">}</span>
+  <span class="o">}</span></code></pre></figure>
+<p>Why: it is not at all essential. Usually, distance functions will barely be compared, or instantiated. So you are not going to save a lot of anything. But from an engineering point of view it <em>emphasizes</em> that there exist only one such distance. We might as well formalize it.</p>
+</article>
+</div>
+<aside class="sidebar" id="nav">
+ <div class="elk"><a href="/"><img src="/img/elk200.png" alt="ELKI Data Mining"></a></div>
+ <h1><a href="/">ELKI&nbsp;Data&nbsp;Mining</a></h1>
+ <nav>
+    <a class="item" href="/releases/">Releases</a>
+    <a class="item" href="/license">AGPLv3 License</a>
+    <a class="item" href="/howto/">How To Do ...</a>
+    <a class="item" href="/dev/">Development</a>
+    <a class="item" href="/tutorial/">Tutorials</a>
+      <a class="subitem" href="/tutorial/distance_functions">Custom Distance</a>
+      <a class="subitem" href="/tutorial/outlier">Outlier Detection</a>
+      <a class="subitem" href="/tutorial/same-size_k_means">Same-Size K-Means</a>
+      <a class="subitem" href="/tutorial/hierarchical_clustering">Implementing HAC</a>
+      <a class="subitem" href="/tutorial/result_handler">Result Handlers</a>
+      <a class="subitem active" href="/tutorial/spatial_distance_functions">Spatial Distance Functions</a>
+      <a class="subitem" href="/tutorial/outlier_ODIN">Implementing ODIN</a>
+      <a class="subitem" href="/tutorial/cfsfdp">Implementing CFSFDP</a>
+    <a class="item" href="/algorithms/">Algorithms</a>
+    <a class="item" href="/examples/">Examples</a>
+    <a class="item" href="/faq">FAQ</a>
+    <a class="item" href="/datasets/">Data sets</a>
+    <a class="item" href="/benchmarking">Benchmarking</a>
+    <a class="item" href="/publications">Publications</a>
+    <a class="item" href="/team">ELKI Team</a>
+    <span class="item" style="margin-top: 1em"><a href="https://github.com/elki-project/elki"><span class="icon icon--github"><svg viewBox="0 0 16 16"><path fill="#828282" d="M7.999,0.431c-4.285,0-7.76,3.474-7.76,7.761 c0,3.428,2.223,6.337,5.307,7.363c0.388,0.071,0.53-0.168,0.53-0.374c0-0.184-0.007-0.672-0.01-1.32 c-2.159,0.469-2.614-1.04-2.614-1.04c-0.353-0.896-0.862-1.135-0.862-1.135c-0.705-0.481,0.053-0.472,0.053-0.472 c0.779,0.055,1.189,0.8,1.189,0.8c0.692,1.186,1.816,0.843,2.258,0.645c0.071-0.502,0.271-0.843,0.493-1.037 C4.86,11.425,3.049,10.76,3.049,7.786c0-0.847,0.302-1.54,0.799-2.082C3.768,5.507,3.501,4.718,3.924,3.65 c0,0,0.652-0.209,2.134,0.796C6.677,4.273,7.34,4.187,8,4.184c0.659,0.003,1.323,0.089,1.943,0.261 c1.482-1.004,2.132-0.796,2.132-0.796c0.423,1.068,0.157,1.857,0.077,2.054c0.497,0.542,0.798,1.235,0.798,2.082 c0,2.981-1.814,3.637-3.543,3.829c0.279,0.24,0.527,0.713,0.527,1.437c0,1.037-0.01,1.874-0.01,2.129 c0,0.208,0.14,0.449,0.534,0.373c3.081-1.028,5.302-3.935,5.302-7.362C15.76,3.906,12.285,0.431,7.999,0.431z"/></svg>
+</span> elki-project</a> on GitHub</span>
+ </nav>
+  <a href="#nav" class="navelk"><img src="/img/elk200.png" alt="Go to navigation"></a>
+</aside>
+<script src="/js/maillink.js" type="text/javascript"></script>
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-87792924-1"></script>
+<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);};if(!window['ga-disable-UA-87792924-1']){gtag('js',new Date());gtag('config','UA-87792924-1',{'anonymize_ip':true})}</script>
+</body>
+</html>

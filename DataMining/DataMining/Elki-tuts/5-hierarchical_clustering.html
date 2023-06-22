@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html>
+<head>
+ <meta charset="utf-8">
+ <title>Implenting Hierarchical Clustering</title>
+ <meta name="description" content="Open-Source Data Mining with Java.">
+ <meta http-equiv="X-UA-Compatible" content="IE=edge">
+ <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/css/main.css">
+<link href="//fonts.googleapis.com/css?family=Inconsolata%7CSource+Sans+Pro" rel="stylesheet">
+<link rel="canonical" href="http://elki-project.github.io/tutorial/hierarchical_clustering">
+<link rel="shortcut icon" href="/img/favicon.png" type="image/png">
+<link rel="stylesheet" type="text/css" href="//cdnjs.cloudflare.com/ajax/libs/cookieconsent2/3.0.3/cookieconsent.min.css" />
+  <script src="//cdnjs.cloudflare.com/ajax/libs/cookieconsent2/3.0.3/cookieconsent.min.js"></script>
+  <script>window["denyCookies"]=function(b){window["ga-disable-UA-87792924-1"]=b;}
+window.addEventListener("load",function(){window.cookieconsent.initialise({palette:{popup:{background:"#edeff5",text:"#838391"},button:{background:"#4b81e8"}},theme:"classic",type:"opt-out",content:{message:"This website uses Google Analytics cookies to ensure you get the best experience on our website, and is hosted on GitHub servers outside of our control.",link:"GitHub privacy statement",href:"https://help.github.com/articles/github-privacy-statement/",deny:"Disable Google Analytics"},onInitialise:function(status){window.denyCookies(!this.hasConsented());},onStatusChange:function(status,chosenBefore){window.denyCookies(!this.hasConsented());}})});</script>
+</head>
+<body>
+<div class="content">
+ <article class="post">
+<h1 id="implementing-hierarchical-clustering">Implementing Hierarchical Clustering</h1>
+<p class="versioninfo">Version information: Updated for ELKI 0.7.1</p>
+<p>In this tutorial, we will implement the <em>naive approach</em> to hierarchical clustering. It is naive in the sense that it is a fairly general procedure, which unfortunately operates in O(n<sup>3</sup>) runtime and O(n<sup>2</sup>) memory, so it does not scale very well. For some linkage criteria, there exist optimized algorithms such as <a href="/releases/current/doc/de/lmu/ifi/dbs/elki/algorithm/clustering/hierarchical/SLINK.html">SLINK</a>, which computes single-link clustering in low O(n<sup>2</sup>) runtime and O(n) memory.</p>
+<p>We will initially construct a very simple algorithm, then improve on it in multiple steps. This material was prepared for the tutorials to the KDD lecture at LMU.</p>
+<h2 id="initial-version">Initial Version</h2>
+<p>The first version will try to do a straightforward implementation, for single-link only, as a student would likely implement it given a textbook description of the algorithm:</p>
+<ol>
+ <li>Compute a distance matrix</li>
+ <li>Repeat until only one cluster remains:</li>
+ <li>Find minimum in matrix (except diagonal)</li>
+ <li>Merge these two clusters</li>
+ <li>Update matrix with minimum of the two columns</li>
+</ol>
+<p>However, we will see that there is more to the algorithm, such as the need to track the actual clusters and represent the clustering hierarchy.</p>
+<h3 id="auto-generated-code">Auto-generated code</h3>
+<p>First of all, we start a new class, <code class="language-plaintext highlighter-rouge">NaiveAgglomerativeHierarchicalClustering</code>, extending <a href="/releases/current/doc/de/lmu/ifi/dbs/elki/algorithm/AbstractDistanceBasedAlgorithm.html">AbstractDistanceBasedAlgorithm</a>. We accept any type of object <code class="language-plaintext highlighter-rouge">O</code> (as long as we have a distance function), and for now the output type is the abstract type <code class="language-plaintext highlighter-rouge">Result</code> (for the initial version, we could have used <code class="language-plaintext highlighter-rouge">Clustering&lt;Model&gt;</code>, too). After having eclipse auto-generate method stubs and constructor, the template code looks like this:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java"><span class="kn">package</span> <span class="nn">tutorial.clustering</span><span class="o">;</span>
+
+<span class="kn">import</span> <span class="nn">de.lmu.ifi.dbs.elki.algorithm.AbstractDistanceBasedAlgorithm</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">de.lmu.ifi.dbs.elki.data.type.TypeInformation</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">de.lmu.ifi.dbs.elki.distance.distancefunction.DistanceFunction</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">de.lmu.ifi.dbs.elki.logging.Logging</span><span class="o">;</span>
+<span class="kn">import</span> <span class="nn">de.lmu.ifi.dbs.elki.result.Result</span><span class="o">;</span>
+
+<span class="kd">public</span> <span class="kd">class</span> <span class="nc">NaiveAgglomerativeHierarchicalClustering</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span>
+  <span class="kd">extends</span> <span class="nc">AbstractDistanceBasedAlgorithm</span><span class="o">&lt;</span><span class="no">O</span><span class="o">,</span> <span class="nc">Result</span><span class="o">&gt;</span> <span class="o">{</span>
+
+  <span class="kd">protected</span> <span class="nf">NaiveAgglomerativeHierarchicalClustering</span><span class="o">(</span><span class="nc">DistanceFunction</span><span class="o">&lt;?</span> <span class="kd">super</span> <span class="no">O</span><span class="o">&gt;</span> <span class="n">distanceFunction</span><span class="o">)</span> <span class="o">{</span>
+    <span class="kd">super</span><span class="o">(</span><span class="n">distanceFunction</span><span class="o">);</span>
+    <span class="c1">// TODO Auto-generated constructor stub</span>
+  <span class="o">}</span>
+
+  <span class="nd">@Override</span>
+  <span class="kd">public</span> <span class="nc">TypeInformation</span><span class="o">[]</span> <span class="nf">getInputTypeRestriction</span><span class="o">()</span> <span class="o">{</span>
+    <span class="c1">// TODO Auto-generated method stub</span>
+    <span class="k">return</span> <span class="kc">null</span><span class="o">;</span>
+  <span class="o">}</span>
+
+  <span class="nd">@Override</span>
+  <span class="kd">protected</span> <span class="nc">Logging</span> <span class="nf">getLogger</span><span class="o">()</span> <span class="o">{</span>
+    <span class="c1">// TODO Auto-generated method stub</span>
+    <span class="k">return</span> <span class="kc">null</span><span class="o">;</span>
+  <span class="o">}</span>
+<span class="o">}</span></code></pre></figure>
+<p>We can immediately fill the two stub methods (we will come to the constructor later) - the input type must of course be appropriate for our distance function, and we use a standard class logger for error reporting:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="cm">/**
+   * Static class logger.
+   */</span>
+  <span class="kd">private</span> <span class="kd">static</span> <span class="kd">final</span> <span class="nc">Logging</span> <span class="no">LOG</span> <span class="o">=</span> <span class="nc">Logging</span><span class="o">.</span><span class="na">getLogger</span><span class="o">(</span><span class="nc">NaiveAgglomerativeHierarchicalClustering</span><span class="o">.</span><span class="na">class</span><span class="o">);</span>
+
+  <span class="nd">@Override</span>
+  <span class="kd">protected</span> <span class="nc">Logging</span> <span class="nf">getLogger</span><span class="o">()</span> <span class="o">{</span>
+    <span class="k">return</span> <span class="no">LOG</span><span class="o">;</span>
+  <span class="o">}</span>
+
+  <span class="nd">@Override</span>
+  <span class="kd">public</span> <span class="nc">TypeInformation</span><span class="o">[]</span> <span class="nf">getInputTypeRestriction</span><span class="o">()</span> <span class="o">{</span>
+    <span class="k">return</span> <span class="nc">TypeUtil</span><span class="o">.</span><span class="na">array</span><span class="o">(</span>
+       <span class="n">getDistanceFunction</span><span class="o">().</span><span class="na">getInputTypeRestriction</span><span class="o">()</span>
+    <span class="o">);</span>
+  <span class="o">}</span></code></pre></figure>
+<h3 id="the-run-method">The <code class="language-plaintext highlighter-rouge">run</code> method</h3>
+<p>The <code class="language-plaintext highlighter-rouge">run</code> method is the heart of the algorithm. However, due to limitations of the Java language, eclipse will not be able to automatically infer the signature of this method. Note that there exists a <code class="language-plaintext highlighter-rouge">Result run(Database db);</code> method we inherited from <a href="/releases/current/doc/de/lmu/ifi/dbs/elki/algorithm/AbstractAlgorithm.html">AbstractAlgorithm</a>, which we do not want to override. Instead, our run method uses the following signature:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="kd">public</span> <span class="nc">Result</span> <span class="nf">run</span><span class="o">(</span><span class="nc">Database</span> <span class="n">db</span><span class="o">,</span> <span class="nc">Relation</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span> <span class="n">relation</span><span class="o">)</span> <span class="o">{</span>
+      <span class="k">return</span> <span class="kc">null</span><span class="o">;</span>
+    <span class="o">}</span></code></pre></figure>
+<p>Where <code class="language-plaintext highlighter-rouge">Relation&lt;O&gt;</code> will be of the type requested by <code class="language-plaintext highlighter-rouge">getInputTypeRestriction()</code> - i.e. it will be determined by our distance function. If we used a string distance function, the relation will be storing strings. But in fact, we do not need to care what <code class="language-plaintext highlighter-rouge">O</code> actually is - all we will be using are distances.</p>
+<p>In order to compute distances, we need to connect the distance function to this relation. This will allow ELKI to choose an optimized implementation where appropriate. Fortunately, as this is a very common procedure, it is just a single line:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="nc">DistanceQuery</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span> <span class="n">dq</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="na">getDistanceQuery</span><span class="o">(</span><span class="n">relation</span><span class="o">,</span> <span class="n">getDistanceFunction</span><span class="o">());</span></code></pre></figure>
+<p>For the actual algorithm, we will be using a matrix of distances. For efficiency, we will be using the raw type of <code class="language-plaintext highlighter-rouge">double[][]</code> (we will be further optimizing this to <code class="language-plaintext highlighter-rouge">double[]</code> later). For this to work, we need a unique mapping of objects to columns and rows in this matrix, and back. For this, we force the database IDs to be a static array:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="nc">ArrayDBIDs</span> <span class="n">ids</span> <span class="o">=</span> <span class="nc">DBIDUtil</span><span class="o">.</span><span class="na">ensureArray</span><span class="o">(</span><span class="n">relation</span><span class="o">.</span><span class="na">getDBIDs</span><span class="o">());</span>
+    <span class="kd">final</span> <span class="kt">int</span> <span class="n">size</span> <span class="o">=</span> <span class="n">ids</span><span class="o">.</span><span class="na">size</span><span class="o">();</span>
+
+    <span class="no">LOG</span><span class="o">.</span><span class="na">verbose</span><span class="o">(</span><span class="s">"Notice: SLINK is a much faster algorithm for single-linkage clustering!"</span><span class="o">);</span></code></pre></figure>
+<p>Most of the time, this will be a no-op. But if we e.g. were processing data streams, the ids could have been a hash set, for example. The <a href="/releases/current/doc/de/lmu/ifi/dbs/elki/database/ids/ArrayDBIDs.html">ArrayDBIDs</a> API will allow us indexed access into the DBIDs, which we will use to map column and row numbers to actual objects. We also put in a warning to tell users that this algorithm is slow, and there exists a much faster alternative.</p>
+<p>In order to refer to the <code class="language-plaintext highlighter-rouge">i</code>th element, we will be using an <a href="/releases/current/doc/de/lmu/ifi/dbs/elki/database/ids/DBIDArrayIter.html">DBIDArrayIter</a>. This is similar to a <code class="language-plaintext highlighter-rouge">java.util.ListIterator&lt;DBID&gt;</code>, but it will avoid generating objects and is substantially faster this way. The Java <code class="language-plaintext highlighter-rouge">java.util.Iterator</code> API is good when you have large objects, but not for primitives such as these object references. You can learn more about this API on the <a href="/dev/dbids">Development/DBIDs</a> page. With <code class="language-plaintext highlighter-rouge">iter.seek(i)</code> we can seek to a particular position, while with <code class="language-plaintext highlighter-rouge">iter.advance()</code> we can proceed to the next element.</p>
+<h3 id="computing-the-distance-matrix">Computing the distance matrix</h3>
+<p>We use this to compute the initial distance matrix to work on:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="kt">double</span><span class="o">[][]</span> <span class="n">matrix</span> <span class="o">=</span> <span class="k">new</span> <span class="kt">double</span><span class="o">[</span><span class="n">size</span><span class="o">][</span><span class="n">size</span><span class="o">];</span>
+    <span class="nc">DBIDArrayIter</span> <span class="n">ix</span> <span class="o">=</span> <span class="n">ids</span><span class="o">.</span><span class="na">iter</span><span class="o">(),</span> <span class="n">iy</span> <span class="o">=</span> <span class="n">ids</span><span class="o">.</span><span class="na">iter</span><span class="o">();</span>
+    <span class="k">for</span><span class="o">(</span><span class="kt">int</span> <span class="n">x</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span> <span class="n">ix</span><span class="o">.</span><span class="na">valid</span><span class="o">();</span> <span class="n">x</span><span class="o">++,</span> <span class="n">ix</span><span class="o">.</span><span class="na">advance</span><span class="o">())</span> <span class="o">{</span>
+      <span class="n">iy</span><span class="o">.</span><span class="na">seek</span><span class="o">(</span><span class="mi">0</span><span class="o">);</span>
+      <span class="k">for</span><span class="o">(</span><span class="kt">int</span> <span class="n">y</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span> <span class="n">y</span> <span class="o">&lt;</span> <span class="n">x</span><span class="o">;</span> <span class="n">y</span><span class="o">++,</span> <span class="n">iy</span><span class="o">.</span><span class="na">advance</span><span class="o">())</span> <span class="o">{</span>
+        <span class="kd">final</span> <span class="kt">double</span> <span class="n">dist</span> <span class="o">=</span> <span class="n">dq</span><span class="o">.</span><span class="na">distance</span><span class="o">(</span><span class="n">ix</span><span class="o">,</span> <span class="n">iy</span><span class="o">);</span>
+        <span class="n">matrix</span><span class="o">[</span><span class="n">x</span><span class="o">][</span><span class="n">y</span><span class="o">]</span> <span class="o">=</span> <span class="n">dist</span><span class="o">;</span>
+        <span class="n">matrix</span><span class="o">[</span><span class="n">y</span><span class="o">][</span><span class="n">x</span><span class="o">]</span> <span class="o">=</span> <span class="n">dist</span><span class="o">;</span>
+      <span class="o">}</span>
+    <span class="o">}</span></code></pre></figure>
+<p>Note that we exploit symmetry, and we do not fill the diagonal of the matrix at all (Java will have initialized it to 0, but we will not be using these values). <code class="language-plaintext highlighter-rouge">dq.distance(ix, iy)</code> computes the distance of the two objects the iterators currently point to; but as this could be any type of number, <code class="language-plaintext highlighter-rouge">doubleValue()</code> converts it to the number type we really work with. Note that e.g. with average linkage clustering, even if we had an integer valued distance function such as Levenshtein distance, we would still see non-integer distances in our dendrogram.</p>
+<p>We do not rely on shared code for this task for two reasons: first of all, we need to be able to freely modify the matrix, and second, we need to have a stable indexing into the matrix to be able to map it to objects.</p>
+<p>Furthermore, we will need some auxillary data that will represent the dendrogram and our current search progress. The abstract description of the algorithm doesn’t really talk about this, so we need to come up with a suitable representation of our own. The version we chose here is somewhat inspired by the SLINK algorithm. We use three auxillary storages:</p>
+<ol>
+ <li>A <code class="language-plaintext highlighter-rouge">height</code> array that indicates when one object “joined” the cluster of another object. The name “height” is appropriate, because in a dendrogram view, this would be the height of the join node. We initialize this to the invalid value of ∞. This will also indicate columns that were already merged into others.</li>
+ <li>A <code class="language-plaintext highlighter-rouge">parent</code> reference that will indicate the object that “leads” the parent cluster. We will not be reading this in the first version of the algorithm, though, so you could leave it away for now. As initial values, we let every object reference itself.</li>
+ <li>A <code class="language-plaintext highlighter-rouge">clusters</code> map, which points to the current members of a non-trivial cluster. We will assume that objects not in this map are still singulars. For efficiency we use the Trove type <code class="language-plaintext highlighter-rouge">TIntObjectMap&lt;[ModifiableDBIDs](./ModifiableDBIDs)&gt;</code>, which is much more memory effective than a <code class="language-plaintext highlighter-rouge">Map&lt;Integer, [ModifiableDBIDs](./ModifiableDBIDs)&gt;</code> but works essentially the same way.</li>
+</ol>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="c1">// Initialize space for result:</span>
+    <span class="kt">double</span><span class="o">[]</span> <span class="n">height</span> <span class="o">=</span> <span class="k">new</span> <span class="kt">double</span><span class="o">[</span><span class="n">size</span><span class="o">];</span>
+    <span class="nc">Arrays</span><span class="o">.</span><span class="na">fill</span><span class="o">(</span><span class="n">height</span><span class="o">,</span> <span class="nc">Double</span><span class="o">.</span><span class="na">POSITIVE_INFINITY</span><span class="o">);</span>
+    <span class="c1">// Parent node, to track merges</span>
+    <span class="c1">// have every object point to itself initially</span>
+    <span class="nc">ArrayModifiableDBIDs</span> <span class="n">parent</span> <span class="o">=</span> <span class="nc">DBIDUtil</span><span class="o">.</span><span class="na">newArray</span><span class="o">(</span><span class="n">ids</span><span class="o">);</span>
+    <span class="c1">// Active clusters, when not trivial.</span>
+    <span class="nc">Int2ReferenceMap</span><span class="o">&lt;</span><span class="nc">ModifiableDBIDs</span><span class="o">&gt;</span> <span class="n">clusters</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">Int2ReferenceOpenHashMap</span><span class="o">&lt;&gt;();</span></code></pre></figure>
+<h3 id="algorithm-main-loop">Algorithm main loop</h3>
+<p>The main algorithm is iterative, driven by a simple loop. In order to allow tracking the progress of the algorithm, we include a progress logger, which will show up as a nice progress bar in <code class="language-plaintext highlighter-rouge">-verbose</code> mode. Due to hotspot optimization, when verbosity is not enabled, it should be optimized away and come at no cost.</p>
+<p>For the initial version, we will be using a parameter <code class="language-plaintext highlighter-rouge">numclusters</code>, with the number of clusters to retain in the final clustering. This is easy to integrate by just stopping the algorithm early of having merged all objects.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="kd">final</span> <span class="kt">int</span> <span class="n">stop</span> <span class="o">=</span> <span class="n">size</span> <span class="o">-</span> <span class="n">numclusters</span><span class="o">;</span>
+    <span class="nc">FiniteProgress</span> <span class="n">prog</span> <span class="o">=</span> <span class="no">LOG</span><span class="o">.</span><span class="na">isVerbose</span><span class="o">()</span> <span class="o">?</span>
+      <span class="k">new</span> <span class="nf">FiniteProgress</span><span class="o">(</span><span class="s">"Agglomerative clustering"</span><span class="o">,</span> <span class="n">stop</span><span class="o">,</span> <span class="no">LOG</span><span class="o">)</span>
+      <span class="o">:</span> <span class="kc">null</span><span class="o">;</span>
+    <span class="k">for</span><span class="o">(</span><span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">stop</span><span class="o">;</span> <span class="n">i</span><span class="o">++)</span> <span class="o">{</span>
+      <span class="c1">// TODO: find clusters to merge</span>
+
+      <span class="c1">// TODO: store the merge in auxillary data</span>
+
+      <span class="c1">// TODO: update distance matrix</span>
+
+      <span class="k">if</span><span class="o">(</span><span class="n">prog</span> <span class="o">!=</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+        <span class="n">prog</span><span class="o">.</span><span class="na">incrementProcessed</span><span class="o">(</span><span class="no">LOG</span><span class="o">);</span>
+      <span class="o">}</span>
+    <span class="o">}</span>
+    <span class="k">if</span><span class="o">(</span><span class="n">prog</span> <span class="o">!=</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+      <span class="n">prog</span><span class="o">.</span><span class="na">ensureCompleted</span><span class="o">(</span><span class="no">LOG</span><span class="o">);</span>
+    <span class="o">}</span></code></pre></figure>
+<p>So now we need to implement the three key steps of the algorithm: find two clusters to merge, and then update the matrix. Finding the minimum distance is fairly obvious, except that we need to skip some rows and columns (because they have already been merged). This of course depends on our choice of memory representation. We decided to go with a static allocated matrix, to avoid repeated allocation of memory, which can be rather expensive in Java. Instead, the <code class="language-plaintext highlighter-rouge">height</code> will serve as a lookup table of which rows and columns to skip.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">      <span class="kt">double</span> <span class="n">min</span> <span class="o">=</span> <span class="nc">Double</span><span class="o">.</span><span class="na">POSITIVE_INFINITY</span><span class="o">;</span>
+      <span class="kt">int</span> <span class="n">minx</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="o">,</span> <span class="n">miny</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="o">;</span>
+      <span class="k">for</span><span class="o">(</span><span class="kt">int</span> <span class="n">x</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span> <span class="n">x</span> <span class="o">&lt;</span> <span class="n">size</span><span class="o">;</span> <span class="n">x</span><span class="o">++)</span> <span class="o">{</span>
+        <span class="k">if</span><span class="o">(</span><span class="n">height</span><span class="o">[</span><span class="n">x</span><span class="o">]</span> <span class="o">&lt;</span> <span class="nc">Double</span><span class="o">.</span><span class="na">POSITIVE_INFINITY</span><span class="o">)</span> <span class="o">{</span>
+          <span class="k">continue</span><span class="o">;</span>
+        <span class="o">}</span>
+        <span class="k">for</span><span class="o">(</span><span class="kt">int</span> <span class="n">y</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span> <span class="n">y</span> <span class="o">&lt;</span> <span class="n">x</span><span class="o">;</span> <span class="n">y</span><span class="o">++)</span> <span class="o">{</span>
+          <span class="k">if</span><span class="o">(</span><span class="n">height</span><span class="o">[</span><span class="n">y</span><span class="o">]</span> <span class="o">&lt;</span> <span class="nc">Double</span><span class="o">.</span><span class="na">POSITIVE_INFINITY</span><span class="o">)</span> <span class="o">{</span>
+            <span class="k">continue</span><span class="o">;</span>
+          <span class="o">}</span>
+          <span class="k">if</span><span class="o">(</span><span class="n">matrix</span><span class="o">[</span><span class="n">x</span><span class="o">][</span><span class="n">y</span><span class="o">]</span> <span class="o">&lt;</span> <span class="n">min</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">min</span> <span class="o">=</span> <span class="n">matrix</span><span class="o">[</span><span class="n">x</span><span class="o">][</span><span class="n">y</span><span class="o">];</span>
+            <span class="n">minx</span> <span class="o">=</span> <span class="n">x</span><span class="o">;</span>
+            <span class="n">miny</span> <span class="o">=</span> <span class="n">y</span><span class="o">;</span>
+          <span class="o">}</span>
+        <span class="o">}</span>
+      <span class="o">}</span></code></pre></figure>
+<p>The <code class="language-plaintext highlighter-rouge">min</code>, <code class="language-plaintext highlighter-rouge">minx</code> and <code class="language-plaintext highlighter-rouge">miny</code> variables will track the minimum value and its position. Note that the inner loop does not run over the complete matrix: we assume the distances to be symmetric, so we can avoid testing the symmetric value. By doing this, we also do not need to avoid <code class="language-plaintext highlighter-rouge">x==y</code>. This also leads to optimization potential: if we are not going to use this part of the matrix, can we also avoid storing it in memory? We will be improving this later. When implementing this algorithm, you should put a “TODO” or “FIXME” comment here and note this down.</p>
+<p>Next, we will be performing the merge. This means updating the <code class="language-plaintext highlighter-rouge">height</code>, <code class="language-plaintext highlighter-rouge">parent</code> and <code class="language-plaintext highlighter-rouge">clusters</code> maps. Here is another design decision: are we going to merge <code class="language-plaintext highlighter-rouge">miny</code> into <code class="language-plaintext highlighter-rouge">minx</code>, or the other way around? Given above loop, <code class="language-plaintext highlighter-rouge">x &gt; y</code> should hold, and it should be beneficial to merge <code class="language-plaintext highlighter-rouge">minx</code> into <code class="language-plaintext highlighter-rouge">miny</code>. We will first move our iterators to point to the objects referenced by the <code class="language-plaintext highlighter-rouge">minx</code> and <code class="language-plaintext highlighter-rouge">miny</code> columns. This is again a trick to save memory (and thus garbage collection cost and runtime).</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">      <span class="c1">// Avoid allocating memory, by reusing existing iterators:</span>
+      <span class="n">ix</span><span class="o">.</span><span class="na">seek</span><span class="o">(</span><span class="n">minx</span><span class="o">);</span>
+      <span class="n">iy</span><span class="o">.</span><span class="na">seek</span><span class="o">(</span><span class="n">miny</span><span class="o">);</span>
+      <span class="c1">// Perform merge in data structure: x -&gt; y</span>
+      <span class="c1">// Since y &lt; x, prefer keeping y, dropping x.</span>
+      <span class="n">height</span><span class="o">[</span><span class="n">minx</span><span class="o">]</span> <span class="o">=</span> <span class="n">min</span><span class="o">;</span>
+      <span class="n">parent</span><span class="o">.</span><span class="na">set</span><span class="o">(</span><span class="n">minx</span><span class="o">,</span> <span class="n">iy</span><span class="o">);</span></code></pre></figure>
+<p>Updating the <code class="language-plaintext highlighter-rouge">clusters</code> map is slightly more complicated because of an implementation design decision above: to save memory, we only wanted to track the non-singleton clusters in the <code class="language-plaintext highlighter-rouge">clusters</code> map. This, however, means we might see <code class="language-plaintext highlighter-rouge">null</code> values when accessing it, and do an appropriate case distinction.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">      <span class="c1">// Merge into cluster</span>
+      <span class="nc">ModifiableDBIDs</span> <span class="n">cx</span> <span class="o">=</span> <span class="n">clusters</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">minx</span><span class="o">);</span>
+      <span class="nc">ModifiableDBIDs</span> <span class="n">cy</span> <span class="o">=</span> <span class="n">clusters</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">miny</span><span class="o">);</span>
+      <span class="k">if</span><span class="o">(</span><span class="n">cy</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+        <span class="n">cy</span> <span class="o">=</span> <span class="nc">DBIDUtil</span><span class="o">.</span><span class="na">newHashSet</span><span class="o">();</span>
+        <span class="n">cy</span><span class="o">.</span><span class="na">add</span><span class="o">(</span><span class="n">iy</span><span class="o">);</span>
+      <span class="o">}</span>
+      <span class="k">if</span><span class="o">(</span><span class="n">cx</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+        <span class="n">cy</span><span class="o">.</span><span class="na">add</span><span class="o">(</span><span class="n">ix</span><span class="o">);</span>
+      <span class="o">}</span>
+      <span class="k">else</span> <span class="o">{</span>
+        <span class="n">cy</span><span class="o">.</span><span class="na">addDBIDs</span><span class="o">(</span><span class="n">cx</span><span class="o">);</span>
+        <span class="n">clusters</span><span class="o">.</span><span class="na">remove</span><span class="o">(</span><span class="n">minx</span><span class="o">);</span>
+      <span class="o">}</span>
+      <span class="n">clusters</span><span class="o">.</span><span class="na">put</span><span class="o">(</span><span class="n">miny</span><span class="o">,</span> <span class="n">cy</span><span class="o">);</span></code></pre></figure>
+<p>If <code class="language-plaintext highlighter-rouge">miny</code> points to a singleton cluster, we’ll have to create a new set instead. <code class="language-plaintext highlighter-rouge">DBIDUtil.newHashSet()</code> produces and efficient data structure for collcting DBIDs. It is similar to a <code class="language-plaintext highlighter-rouge">java.util.HashSet&lt;DBID&gt;</code>, but needs much less memory. After merging the <code class="language-plaintext highlighter-rouge">minx</code> cluster into the cluster of <code class="language-plaintext highlighter-rouge">miny</code>, we can forget it.</p>
+<p>Now we will be updating our matrix. For single-linkage the update rule is pretty simple: we need to fill the <code class="language-plaintext highlighter-rouge">miny</code> column with the minimum of the <code class="language-plaintext highlighter-rouge">miny</code> and the <code class="language-plaintext highlighter-rouge">minx</code> columns:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">      <span class="c1">// Update distance matrix for y:</span>
+      <span class="k">for</span><span class="o">(</span><span class="kt">int</span> <span class="n">j</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span> <span class="n">j</span> <span class="o">&lt;</span> <span class="n">size</span><span class="o">;</span> <span class="n">j</span><span class="o">++)</span> <span class="o">{</span>
+        <span class="n">matrix</span><span class="o">[</span><span class="n">j</span><span class="o">][</span><span class="n">miny</span><span class="o">]</span> <span class="o">=</span> <span class="nc">Math</span><span class="o">.</span><span class="na">min</span><span class="o">(</span><span class="n">matrix</span><span class="o">[</span><span class="n">j</span><span class="o">][</span><span class="n">minx</span><span class="o">],</span> <span class="n">matrix</span><span class="o">[</span><span class="n">j</span><span class="o">][</span><span class="n">miny</span><span class="o">]);</span>
+        <span class="n">matrix</span><span class="o">[</span><span class="n">miny</span><span class="o">][</span><span class="n">j</span><span class="o">]</span> <span class="o">=</span> <span class="nc">Math</span><span class="o">.</span><span class="na">min</span><span class="o">(</span><span class="n">matrix</span><span class="o">[</span><span class="n">minx</span><span class="o">][</span><span class="n">j</span><span class="o">],</span> <span class="n">matrix</span><span class="o">[</span><span class="n">miny</span><span class="o">][</span><span class="n">j</span><span class="o">]);</span>
+      <span class="o">}</span></code></pre></figure>
+<p>This code will become more messy when we add support for other linkage formulas.</p>
+<h3 id="returning-a-clustering">Returning a Clustering</h3>
+<p>At this point, the main clustering algorithm will run. But the result will be hard to use, as it is stored in a <code class="language-plaintext highlighter-rouge">height</code> array, a parent object reference and cluster member sets. In order to exploit the visualization and evaluation capabilites of ELKI, we need to produce a simpler structure. For the first version, we want to keep the effort to a minimum, and we will just return the existing clusters appropriately. We can’t make use of the height and parent IDs this way, though.</p>
+<p>Instead of coming up with our own representation of a dendrogram, we will for now just produce a flat clustering, by looking up all non-merged clusters (i.e. with <code class="language-plaintext highlighter-rouge">height[x]</code> infinity) and produce a <a href="/releases/current/doc/de/lmu/ifi/dbs/elki/data/Cluster.html">Cluster</a> object for each.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="kd">final</span> <span class="nc">Clustering</span><span class="o">&lt;</span><span class="nc">Model</span><span class="o">&gt;</span> <span class="n">dendrogram</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">Clustering</span><span class="o">&lt;&gt;(</span>
+      <span class="s">"Hierarchical-Clustering"</span><span class="o">,</span> <span class="s">"hierarchical-clustering"</span><span class="o">);</span>
+    <span class="k">for</span><span class="o">(</span><span class="kt">int</span> <span class="n">x</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span> <span class="n">x</span> <span class="o">&lt;</span> <span class="n">size</span><span class="o">;</span> <span class="n">x</span><span class="o">++)</span> <span class="o">{</span>
+      <span class="k">if</span><span class="o">(</span><span class="n">height</span><span class="o">[</span><span class="n">x</span><span class="o">]</span> <span class="o">==</span> <span class="nc">Double</span><span class="o">.</span><span class="na">POSITIVE_INFINITY</span><span class="o">)</span> <span class="o">{</span>
+        <span class="nc">DBIDs</span> <span class="n">cids</span> <span class="o">=</span> <span class="n">clusters</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">x</span><span class="o">);</span>
+        <span class="c1">// For singleton objects, this may be null.</span>
+        <span class="k">if</span><span class="o">(</span><span class="n">cids</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+          <span class="n">ix</span><span class="o">.</span><span class="na">seek</span><span class="o">(</span><span class="n">x</span><span class="o">);</span>
+          <span class="n">cids</span> <span class="o">=</span> <span class="nc">DBIDUtil</span><span class="o">.</span><span class="na">deref</span><span class="o">(</span><span class="n">ix</span><span class="o">);</span>
+        <span class="o">}</span>
+        <span class="nc">Cluster</span><span class="o">&lt;</span><span class="nc">Model</span><span class="o">&gt;</span> <span class="n">cluster</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">Cluster</span><span class="o">&lt;&gt;(</span><span class="s">"Cluster"</span><span class="o">,</span> <span class="n">cids</span><span class="o">);</span>
+        <span class="n">dendrogram</span><span class="o">.</span><span class="na">addToplevelCluster</span><span class="o">(</span><span class="n">cluster</span><span class="o">);</span>
+      <span class="o">}</span>
+    <span class="o">}</span>
+    <span class="k">return</span> <span class="n">dendrogram</span><span class="o">;</span></code></pre></figure>
+<p>The parameters of the <a href="/releases/current/doc/de/lmu/ifi/dbs/elki/data/Clustering.html">Clustering</a> will identify the result in the visualization and output. The first is meant to be a user-friendly name for menus, the second should be suitable for file names.</p>
+<h3 id="updating-the-constructor">Updating the constructor</h3>
+<p>We can now update the constructor. We added a parameter, the desired number of clusters <code class="language-plaintext highlighter-rouge">numclusters</code>. For this, we need to update the constructor accordingly. Note that we also make the constructor public.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="cm">/**
+   * Threshold, how many clusters to extract.
+   */</span>
+  <span class="kt">int</span> <span class="n">numclusters</span><span class="o">;</span>
+
+  <span class="cm">/**
+   * Constructor.
+   * 
+   * @param distanceFunction Distance function to use
+   * @param numclusters Number of clusters
+   */</span>
+  <span class="kd">public</span> <span class="nf">NaiveAgglomerativeHierarchicalClustering</span><span class="o">(</span>
+      <span class="nc">DistanceFunction</span><span class="o">&lt;?</span> <span class="kd">super</span> <span class="no">O</span><span class="o">&gt;</span> <span class="n">distanceFunction</span><span class="o">,</span>
+      <span class="kt">int</span> <span class="n">numclusters</span><span class="o">)</span> <span class="o">{</span>
+    <span class="kd">super</span><span class="o">(</span><span class="n">distanceFunction</span><span class="o">);</span>
+    <span class="k">this</span><span class="o">.</span><span class="na">numclusters</span> <span class="o">=</span> <span class="n">numclusters</span><span class="o">;</span>
+  <span class="o">}</span></code></pre></figure>
+<h3 id="adding-a-parameterizer">Adding a Parameterizer</h3>
+<p>So how are we getting this algorithm to show up in the MiniGUI for experiments? We need to add a <a href="/dev/parameterization">Parameterization</a> class. Parameterizers serve the purpose of allowing the automatic generation of command line and UI code for an algorithm. Without a Parameterizer, we could only invoke the algorithm from Java. Fortunately, the parameterizer we need is not particularly difficult - we only added a single integer option.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="kd">public</span> <span class="kd">static</span> <span class="kd">class</span> <span class="nc">Parameterizer</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span>
+    <span class="kd">extends</span> <span class="nc">AbstractDistanceBasedAlgorithm</span><span class="o">.</span><span class="na">Parameterizer</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span> <span class="o">{</span>
+
+    <span class="cm">/**
+     * Desired number of clusters.
+     */</span>
+    <span class="kt">int</span> <span class="n">numclusters</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span>
+
+    <span class="nd">@Override</span>
+    <span class="kd">protected</span> <span class="kt">void</span> <span class="nf">makeOptions</span><span class="o">(</span><span class="nc">Parameterization</span> <span class="n">config</span><span class="o">)</span> <span class="o">{</span>
+      <span class="kd">super</span><span class="o">.</span><span class="na">makeOptions</span><span class="o">(</span><span class="n">config</span><span class="o">);</span>
+      <span class="nc">IntParameter</span> <span class="n">numclustersP</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">IntParameter</span><span class="o">(</span><span class="nc">CutDendrogramByNumberOfClusters</span><span class="o">.</span><span class="na">Parameterizer</span><span class="o">.</span><span class="na">MINCLUSTERS_ID</span><span class="o">)</span> <span class="c1">//</span>
+          <span class="o">.</span><span class="na">addConstraint</span><span class="o">(</span><span class="nc">CommonConstraints</span><span class="o">.</span><span class="na">GREATER_EQUAL_ONE_INT</span><span class="o">);</span>
+      <span class="k">if</span><span class="o">(</span><span class="n">config</span><span class="o">.</span><span class="na">grab</span><span class="o">(</span><span class="n">numclustersP</span><span class="o">))</span> <span class="o">{</span>
+        <span class="n">numclusters</span> <span class="o">=</span> <span class="n">numclustersP</span><span class="o">.</span><span class="na">intValue</span><span class="o">();</span>
+      <span class="o">}</span>
+    <span class="o">}</span>
+
+    <span class="nd">@Override</span>
+    <span class="kd">protected</span> <span class="nc">NaiveAgglomerativeHierarchicalClustering</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span> <span class="nf">makeInstance</span><span class="o">()</span> <span class="o">{</span>
+      <span class="k">return</span> <span class="k">new</span> <span class="nc">NaiveAgglomerativeHierarchicalClustering</span><span class="o">&lt;&gt;(</span><span class="n">distanceFunction</span><span class="o">,</span> <span class="n">numclusters</span><span class="o">);</span>
+    <span class="o">}</span>
+  <span class="o">}</span></code></pre></figure>
+<p>The <code class="language-plaintext highlighter-rouge">makeInstance</code> method tells the UI how to instantiate the algorithm. It will almost always be just a call to the desired constructor. The <code class="language-plaintext highlighter-rouge">makeOptions</code> method needs to define parameters (with type information, default values and value constraints), <code class="language-plaintext highlighter-rouge">grab()</code> their value from the given parameters and store it for later. The parameter classes will usually take care of reporting errors - <code class="language-plaintext highlighter-rouge">grab</code> will then fail, and an error will be stored in the Parameterization. Don’t throw Exceptions - for user friendliness we want to log <em>all</em> errors in a single pass, instead of failing at the first error with an exception.</p>
+<p>After adding this <code class="language-plaintext highlighter-rouge">Parameterizer</code> to the class - note that it <em>must</em> be a static inner class named <code class="language-plaintext highlighter-rouge">Parameterizer</code> so that it can be found automatically - it will show up <em>automatically</em> in the MiniGUI! New classes will show up at the end, alphabetically sorted. So in the MiniGUI, the <code class="language-plaintext highlighter-rouge">-algorithm</code> dropdown should now have an option <code class="language-plaintext highlighter-rouge">tutorial.clustering.NaiveAgglomerativeHierarchicalClustering1</code> at the very end.</p>
+<p>Running it on the “mouse” example data set, and setting the desired number of clusters to 20 yields the following result (which is typical for single-linkage clustering on such noisy data: many clusters with 1-2 elements, and a few larger ones)</p>
+<p><img src="/tutorial/mouse-slink.png" alt="" /></p>
+<p><a href="https://github.com/elki-project/elki/blob/master/addons/tutorial/src/main/java/tutorial/clustering/NaiveAgglomerativeHierarchicalClustering1.java">You can browse the full source code online, in the tutorial folder</a></p>
+<h2 id="improved-version">Improved Version</h2>
+<p>As mentioned above, there exist a number of ways to further improve this algorithm. For the first variation, we want to cut down the memory usage. The resulting memory layout may (because it is continuous) or may not (because it requires additional index computations) be faster. Memory often is important, so we will first modify the algorithm to reduce memory usage.</p>
+<p>Above we computed a complete similarity matrix; but we already assumed it to be symmetric and 0 on the diagonal. For the new memory layout, we want to only keep a triangular matrix, without diagonal. We could use a ragged array as before, which would roughly look like this: <code class="language-plaintext highlighter-rouge">{ {}, {1}, {1, 2}, {1, 2, 3}, {1, 2, 3, 4}, ... }</code>. But we can also flatten this to a single array. Obviously, the total array size must be <code class="language-plaintext highlighter-rouge">size * (size - 1) / 2</code>; in fact any complete triangle will have this size. This leads to the following formula for offset computation: <code class="language-plaintext highlighter-rouge">((x * (x - 1)) &gt;&gt;&gt; 1) + y</code> for <code class="language-plaintext highlighter-rouge">y &lt; x</code>. We can wrap this in a function and hope the optimizer to be smart at fully optimizing it. We can also try to help a bit more at detecting redundant computations, for which we will only be using the following part:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="kd">protected</span> <span class="kd">static</span> <span class="kt">int</span> <span class="nf">triangleSize</span><span class="o">(</span><span class="kt">int</span> <span class="n">x</span><span class="o">)</span> <span class="o">{</span>
+    <span class="k">return</span> <span class="o">(</span><span class="n">x</span> <span class="o">*</span> <span class="o">(</span><span class="n">x</span> <span class="o">-</span> <span class="mi">1</span><span class="o">))</span> <span class="o">&gt;&gt;&gt;</span> <span class="mi">1</span><span class="o">;</span>
+  <span class="o">}</span></code></pre></figure>
+<p>Using this formula, we can now initialize our data structure as follows:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="k">if</span><span class="o">(</span><span class="n">size</span> <span class="o">&gt;</span> <span class="mh">0x10000</span><span class="o">)</span> <span class="o">{</span>
+      <span class="k">throw</span> <span class="k">new</span> <span class="nf">AbortException</span><span class="o">(</span><span class="s">"This implementation does not scale "</span>
+        <span class="o">+</span> <span class="s">"to data sets larger than "</span> <span class="o">+</span> <span class="mh">0x10000</span>
+        <span class="o">+</span> <span class="s">" instances (~17 GB RAM), which results in an integer overflow."</span><span class="o">);</span>
+    <span class="o">}</span>
+
+    <span class="c1">// Compute the initial (lower triangular) distance matrix.</span>
+    <span class="kt">double</span><span class="o">[]</span> <span class="n">scratch</span> <span class="o">=</span> <span class="k">new</span> <span class="kt">double</span><span class="o">[</span><span class="n">triangleSize</span><span class="o">(</span><span class="n">size</span><span class="o">)];</span>
+    <span class="nc">DBIDArrayIter</span> <span class="n">ix</span> <span class="o">=</span> <span class="n">ids</span><span class="o">.</span><span class="na">iter</span><span class="o">(),</span> <span class="n">iy</span> <span class="o">=</span> <span class="n">ids</span><span class="o">.</span><span class="na">iter</span><span class="o">();</span>
+    <span class="c1">// Position counter - must agree with computeOffset!</span>
+    <span class="kt">int</span> <span class="n">pos</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span>
+    <span class="k">for</span><span class="o">(</span><span class="kt">int</span> <span class="n">x</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span> <span class="n">ix</span><span class="o">.</span><span class="na">valid</span><span class="o">();</span> <span class="n">x</span><span class="o">++,</span> <span class="n">ix</span><span class="o">.</span><span class="na">advance</span><span class="o">())</span> <span class="o">{</span>
+      <span class="n">iy</span><span class="o">.</span><span class="na">seek</span><span class="o">(</span><span class="mi">0</span><span class="o">);</span>
+      <span class="k">for</span><span class="o">(</span><span class="kt">int</span> <span class="n">y</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span> <span class="n">y</span> <span class="o">&lt;</span> <span class="n">x</span><span class="o">;</span> <span class="n">y</span><span class="o">++,</span> <span class="n">iy</span><span class="o">.</span><span class="na">advance</span><span class="o">())</span> <span class="o">{</span>
+        <span class="n">scratch</span><span class="o">[</span><span class="n">pos</span><span class="o">]</span> <span class="o">=</span> <span class="n">dq</span><span class="o">.</span><span class="na">distance</span><span class="o">(</span><span class="n">ix</span><span class="o">,</span> <span class="n">iy</span><span class="o">);</span>
+        <span class="n">pos</span><span class="o">++;</span>
+      <span class="o">}</span>
+    <span class="o">}</span></code></pre></figure>
+<p>If you want to play safe, add an <code class="language-plaintext highlighter-rouge">assert(pos == triangle(x) + y);</code> into the inner loop. But the nested loops will enumerate items the same way we compute these offsets, so <code class="language-plaintext highlighter-rouge">pos++</code> will work as desired.</p>
+<p>So far, our code has actually become simpler, but in order to skip rows when finding the minimum its easier to use the <code class="language-plaintext highlighter-rouge">triangleSize</code> function again:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">      <span class="kt">double</span> <span class="n">min</span> <span class="o">=</span> <span class="nc">Double</span><span class="o">.</span><span class="na">POSITIVE_INFINITY</span><span class="o">;</span>
+      <span class="kt">int</span> <span class="n">minx</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="o">,</span> <span class="n">miny</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="o">;</span>
+      <span class="k">for</span><span class="o">(</span><span class="kt">int</span> <span class="n">x</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span> <span class="n">x</span> <span class="o">&lt;</span> <span class="n">size</span><span class="o">;</span> <span class="n">x</span><span class="o">++)</span> <span class="o">{</span>
+        <span class="k">if</span><span class="o">(</span><span class="n">height</span><span class="o">[</span><span class="n">x</span><span class="o">]</span> <span class="o">&lt;</span> <span class="nc">Double</span><span class="o">.</span><span class="na">POSITIVE_INFINITY</span><span class="o">)</span> <span class="o">{</span>
+          <span class="k">continue</span><span class="o">;</span>
+        <span class="o">}</span>
+        <span class="kd">final</span> <span class="kt">int</span> <span class="n">xbase</span> <span class="o">=</span> <span class="n">triangleSize</span><span class="o">(</span><span class="n">x</span><span class="o">);</span>
+        <span class="k">for</span><span class="o">(</span><span class="kt">int</span> <span class="n">y</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span> <span class="n">y</span> <span class="o">&lt;</span> <span class="n">x</span><span class="o">;</span> <span class="n">y</span><span class="o">++)</span> <span class="o">{</span>
+          <span class="k">if</span><span class="o">(</span><span class="n">height</span><span class="o">[</span><span class="n">y</span><span class="o">]</span> <span class="o">&lt;</span> <span class="nc">Double</span><span class="o">.</span><span class="na">POSITIVE_INFINITY</span><span class="o">)</span> <span class="o">{</span>
+            <span class="k">continue</span><span class="o">;</span>
+          <span class="o">}</span>
+          <span class="kd">final</span> <span class="kt">int</span> <span class="n">idx</span> <span class="o">=</span> <span class="n">xbase</span> <span class="o">+</span> <span class="n">y</span><span class="o">;</span>
+          <span class="k">if</span><span class="o">(</span><span class="n">scratch</span><span class="o">[</span><span class="n">idx</span><span class="o">]</span> <span class="o">&lt;</span> <span class="n">min</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">min</span> <span class="o">=</span> <span class="n">scratch</span><span class="o">[</span><span class="n">idx</span><span class="o">];</span>
+            <span class="n">minx</span> <span class="o">=</span> <span class="n">x</span><span class="o">;</span>
+            <span class="n">miny</span> <span class="o">=</span> <span class="n">y</span><span class="o">;</span>
+          <span class="o">}</span>
+        <span class="o">}</span>
+      <span class="o">}</span></code></pre></figure>
+<p>in this code, <code class="language-plaintext highlighter-rouge">xbase</code> is the base offset for each <code class="language-plaintext highlighter-rouge">x</code>. The element index can then be computed as <code class="language-plaintext highlighter-rouge">xbase + y</code>.</p>
+<h3 id="the-new-update-code">The New Update Code</h3>
+<p>For the update rule, this becomes a lot messier. In the previous version, this was just a four line statement. Now we need to perform some case distinctions to remove redundant calculations. Recall that the distances of an object in the triangular matrix are distributed as sketched here:</p><pre>
+\     ↓ column of y
+0 \       ↓ column of x
+0 0 \
+y y y \          ← row of y
+0 0 0 y \
+x x x _ x \      ← row of x
+0 0 0 y 0 x \
+0 0 0 y 0 x 0 \
+</pre>
+<p>so for any object, it will be part of a row and part of a column (with an unsaved 0 inbetween). So when merging the data of <code class="language-plaintext highlighter-rouge">x</code> into <code class="language-plaintext highlighter-rouge">y</code>, we will have three cases to handle: 1. both are stored in rows 2. <code class="language-plaintext highlighter-rouge">y</code> is in column form, <code class="language-plaintext highlighter-rouge">x</code> in row form 3. both are stored in columns</p>
+<p>This is why we need three loops. The first covers <code class="language-plaintext highlighter-rouge">j &lt; y &lt; x</code>, the second <code class="language-plaintext highlighter-rouge">y &lt; j &lt; x</code> and the third <code class="language-plaintext highlighter-rouge">y &lt; x &lt; j</code>.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">      <span class="kd">final</span> <span class="kt">int</span> <span class="n">xbase</span> <span class="o">=</span> <span class="n">triangleSize</span><span class="o">(</span><span class="n">minx</span><span class="o">),</span> <span class="n">ybase</span> <span class="o">=</span> <span class="n">triangleSize</span><span class="o">(</span><span class="n">miny</span><span class="o">);</span>
+      <span class="c1">// Write to (y, j), with j &lt; y</span>
+      <span class="k">for</span><span class="o">(</span><span class="kt">int</span> <span class="n">j</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span> <span class="n">j</span> <span class="o">&lt;</span> <span class="n">miny</span><span class="o">;</span> <span class="n">j</span><span class="o">++)</span> <span class="o">{</span>
+        <span class="k">if</span><span class="o">(</span><span class="n">height</span><span class="o">[</span><span class="n">j</span><span class="o">]</span> <span class="o">&lt;</span> <span class="nc">Double</span><span class="o">.</span><span class="na">POSITIVE_INFINITY</span><span class="o">)</span> <span class="k">continue</span><span class="o">;</span>
+        <span class="n">scratch</span><span class="o">[</span><span class="n">ybase</span> <span class="o">+</span> <span class="n">j</span><span class="o">]</span> <span class="o">=</span> <span class="nc">Math</span><span class="o">.</span><span class="na">min</span><span class="o">(</span><span class="n">scratch</span><span class="o">[</span><span class="n">xbase</span> <span class="o">+</span> <span class="n">j</span><span class="o">],</span> <span class="n">scratch</span><span class="o">[</span><span class="n">ybase</span> <span class="o">+</span> <span class="n">j</span><span class="o">]);</span>
+      <span class="o">}</span>
+      <span class="c1">// Write to (j, y), with y &lt; j &lt; x</span>
+      <span class="k">for</span><span class="o">(</span><span class="kt">int</span> <span class="n">j</span> <span class="o">=</span> <span class="n">miny</span> <span class="o">+</span> <span class="mi">1</span><span class="o">;</span> <span class="n">j</span> <span class="o">&lt;</span> <span class="n">minx</span><span class="o">;</span> <span class="n">j</span><span class="o">++)</span> <span class="o">{</span>
+        <span class="k">if</span><span class="o">(</span><span class="n">height</span><span class="o">[</span><span class="n">j</span><span class="o">]</span> <span class="o">&lt;</span> <span class="nc">Double</span><span class="o">.</span><span class="na">POSITIVE_INFINITY</span><span class="o">)</span> <span class="k">continue</span><span class="o">;</span>
+        <span class="kd">final</span> <span class="kt">int</span> <span class="n">jbase</span> <span class="o">=</span> <span class="n">triangleSize</span><span class="o">(</span><span class="n">j</span><span class="o">);</span>
+        <span class="n">scratch</span><span class="o">[</span><span class="n">jbase</span> <span class="o">+</span> <span class="n">miny</span><span class="o">]</span> <span class="o">=</span> <span class="nc">Math</span><span class="o">.</span><span class="na">min</span><span class="o">(</span><span class="n">scratch</span><span class="o">[</span><span class="n">xbase</span> <span class="o">+</span> <span class="n">j</span><span class="o">],</span> <span class="n">scratch</span><span class="o">[</span><span class="n">jbase</span> <span class="o">+</span> <span class="n">miny</span><span class="o">]);</span>
+      <span class="o">}</span>
+      <span class="c1">// Write to (j, y), with y &lt; x &lt; j</span>
+      <span class="k">for</span><span class="o">(</span><span class="kt">int</span> <span class="n">j</span> <span class="o">=</span> <span class="n">minx</span> <span class="o">+</span> <span class="mi">1</span><span class="o">;</span> <span class="n">j</span> <span class="o">&lt;</span> <span class="n">size</span><span class="o">;</span> <span class="n">j</span><span class="o">++)</span> <span class="o">{</span>
+        <span class="k">if</span><span class="o">(</span><span class="n">height</span><span class="o">[</span><span class="n">j</span><span class="o">]</span> <span class="o">&lt;</span> <span class="nc">Double</span><span class="o">.</span><span class="na">POSITIVE_INFINITY</span><span class="o">)</span> <span class="k">continue</span><span class="o">;</span>
+        <span class="kd">final</span> <span class="kt">int</span> <span class="n">jbase</span> <span class="o">=</span> <span class="n">triangleSize</span><span class="o">(</span><span class="n">j</span><span class="o">);</span>
+        <span class="n">scratch</span><span class="o">[</span><span class="n">jbase</span> <span class="o">+</span> <span class="n">miny</span><span class="o">]</span> <span class="o">=</span> <span class="nc">Math</span><span class="o">.</span><span class="na">min</span><span class="o">(</span><span class="n">scratch</span><span class="o">[</span><span class="n">jbase</span> <span class="o">+</span> <span class="n">minx</span><span class="o">],</span> <span class="n">scratch</span><span class="o">[</span><span class="n">jbase</span> <span class="o">+</span> <span class="n">miny</span><span class="o">]);</span>
+      <span class="o">}</span></code></pre></figure>
+<p>Note that we are not updating column <code class="language-plaintext highlighter-rouge">x</code>. It was marked as merged in <code class="language-plaintext highlighter-rouge">height</code>, and will not be read again.</p>
+<p>That’s it. The result should still be the same, but the memory usage of the algorithm should drop by more than a factor of 2.</p>
+<p><a href="https://github.com/elki-project/elki/blob/master/addons/tutorial/src/main/java/tutorial/clustering/NaiveAgglomerativeHierarchicalClustering2.java">You can browse the full source code online, in the tutorial folder</a></p>
+<h2 id="adding-additional-linkage-strategies">Adding additional linkage strategies</h2>
+<p>Since for single-link there exist the much faster SLINK algorithm (which uses a pointer representation similar to the <code class="language-plaintext highlighter-rouge">parent</code> and <code class="language-plaintext highlighter-rouge">height</code> values we use here), we should try to support other linkage metrics instead.</p>
+<p>It has been shown in literature how the update rules for other metrics should look like, and that they can in general be represented using the following form: <code class="language-plaintext highlighter-rouge">wx * dxj + wy * dyj + beta * dxy</code> where <code class="language-plaintext highlighter-rouge">beta</code> will usually be 0 or negative, and <code class="language-plaintext highlighter-rouge">w_</code> will depend on the cluster sizes.</p>
+<p>Therefore, we add an <code class="language-plaintext highlighter-rouge">enum linkage</code>:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="kd">public</span> <span class="kd">static</span> <span class="kd">enum</span> <span class="nc">Linkage</span> <span class="o">{</span><span class="c1">//</span>
+    <span class="no">SINGLE</span> <span class="o">{</span>
+      <span class="nd">@Override</span>
+      <span class="kd">public</span> <span class="kt">double</span> <span class="nf">combine</span><span class="o">(</span><span class="kt">int</span> <span class="n">sizex</span><span class="o">,</span> <span class="kt">double</span> <span class="n">dx</span><span class="o">,</span> <span class="kt">int</span> <span class="n">sizey</span><span class="o">,</span> <span class="kt">double</span> <span class="n">dy</span><span class="o">,</span> <span class="kt">int</span> <span class="n">sizej</span><span class="o">,</span> <span class="kt">double</span> <span class="n">dxy</span><span class="o">)</span> <span class="o">{</span>
+        <span class="k">return</span> <span class="nc">Math</span><span class="o">.</span><span class="na">min</span><span class="o">(</span><span class="n">dx</span><span class="o">,</span> <span class="n">dy</span><span class="o">);</span>
+      <span class="o">}</span>
+    <span class="o">},</span>
+    <span class="no">COMPLETE</span> <span class="o">{</span>
+      <span class="nd">@Override</span>
+      <span class="kd">public</span> <span class="kt">double</span> <span class="nf">combine</span><span class="o">(</span><span class="kt">int</span> <span class="n">sizex</span><span class="o">,</span> <span class="kt">double</span> <span class="n">dx</span><span class="o">,</span> <span class="kt">int</span> <span class="n">sizey</span><span class="o">,</span> <span class="kt">double</span> <span class="n">dy</span><span class="o">,</span> <span class="kt">int</span> <span class="n">sizej</span><span class="o">,</span> <span class="kt">double</span> <span class="n">dxy</span><span class="o">)</span> <span class="o">{</span>
+        <span class="k">return</span> <span class="nc">Math</span><span class="o">.</span><span class="na">max</span><span class="o">(</span><span class="n">dx</span><span class="o">,</span> <span class="n">dy</span><span class="o">);</span>
+      <span class="o">}</span>
+    <span class="o">};</span>
+    <span class="kd">abstract</span> <span class="kd">public</span> <span class="kt">double</span> <span class="nf">combine</span><span class="o">(</span><span class="kt">int</span> <span class="n">sizex</span><span class="o">,</span> <span class="kt">double</span> <span class="n">dx</span><span class="o">,</span> <span class="kt">int</span> <span class="n">sizey</span><span class="o">,</span> <span class="kt">double</span> <span class="n">dy</span><span class="o">,</span> <span class="kt">int</span> <span class="n">sizej</span><span class="o">,</span> <span class="kt">double</span> <span class="n">dxy</span><span class="o">);</span>
+  <span class="o">}</span></code></pre></figure>
+<p>For the start, we only added single-linkage and complete-linkage. But we will add others below. In order to use this function in the actual algorithm, we need an instance <code class="language-plaintext highlighter-rouge">Linkage linkage = Linkage.SINGLE;</code> for example, and do the following changes to our code:</p>
+<p>When merging the clusters, we need to track their previous cluster sizes (<code class="language-plaintext highlighter-rouge">sizex</code>, <code class="language-plaintext highlighter-rouge">sizey</code>):</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">      <span class="nc">ModifiableDBIDs</span> <span class="n">cx</span> <span class="o">=</span> <span class="n">clusters</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">minx</span><span class="o">);</span>
+      <span class="nc">ModifiableDBIDs</span> <span class="n">cy</span> <span class="o">=</span> <span class="n">clusters</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">miny</span><span class="o">);</span>
+      <span class="kt">int</span> <span class="n">sizex</span> <span class="o">=</span> <span class="mi">1</span><span class="o">,</span> <span class="n">sizey</span> <span class="o">=</span> <span class="mi">1</span><span class="o">;</span> <span class="c1">// cluster sizes, for averaging</span>
+      <span class="k">if</span><span class="o">(</span><span class="n">cy</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+        <span class="n">cy</span> <span class="o">=</span> <span class="nc">DBIDUtil</span><span class="o">.</span><span class="na">newHashSet</span><span class="o">();</span>
+        <span class="n">cy</span><span class="o">.</span><span class="na">add</span><span class="o">(</span><span class="n">iy</span><span class="o">);</span>
+      <span class="o">}</span>
+      <span class="k">else</span> <span class="o">{</span>
+        <span class="n">sizey</span> <span class="o">=</span> <span class="n">cy</span><span class="o">.</span><span class="na">size</span><span class="o">();</span> <span class="c1">// Remember the size of cluster y</span>
+      <span class="o">}</span>
+      <span class="k">if</span><span class="o">(</span><span class="n">cx</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+        <span class="n">cy</span><span class="o">.</span><span class="na">add</span><span class="o">(</span><span class="n">ix</span><span class="o">);</span>
+      <span class="o">}</span>
+      <span class="k">else</span> <span class="o">{</span>
+        <span class="n">sizex</span> <span class="o">=</span> <span class="n">cx</span><span class="o">.</span><span class="na">size</span><span class="o">();</span> <span class="c1">// Remember the size of cluster x</span>
+        <span class="n">cy</span><span class="o">.</span><span class="na">addDBIDs</span><span class="o">(</span><span class="n">cx</span><span class="o">);</span>
+        <span class="n">clusters</span><span class="o">.</span><span class="na">remove</span><span class="o">(</span><span class="n">minx</span><span class="o">);</span>
+      <span class="o">}</span>
+      <span class="n">clusters</span><span class="o">.</span><span class="na">put</span><span class="o">(</span><span class="n">miny</span><span class="o">,</span> <span class="n">cy</span><span class="o">);</span></code></pre></figure>
+<p>Then we can change the update block to:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">      <span class="kd">final</span> <span class="kt">int</span> <span class="n">xbase</span> <span class="o">=</span> <span class="n">triangleSize</span><span class="o">(</span><span class="n">minx</span><span class="o">),</span> <span class="n">ybase</span> <span class="o">=</span> <span class="n">triangleSize</span><span class="o">(</span><span class="n">miny</span><span class="o">);</span>
+      <span class="c1">// Write to (y, j), with j &lt; y</span>
+      <span class="k">for</span><span class="o">(</span><span class="kt">int</span> <span class="n">j</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span> <span class="n">j</span> <span class="o">&lt;</span> <span class="n">miny</span><span class="o">;</span> <span class="n">j</span><span class="o">++)</span> <span class="o">{</span>
+        <span class="k">if</span><span class="o">(</span><span class="n">height</span><span class="o">[</span><span class="n">j</span><span class="o">]</span> <span class="o">&lt;</span> <span class="nc">Double</span><span class="o">.</span><span class="na">POSITIVE_INFINITY</span><span class="o">)</span> <span class="k">continue</span><span class="o">;</span>
+        <span class="kd">final</span> <span class="nc">DBIDs</span> <span class="n">idsj</span> <span class="o">=</span> <span class="n">clusters</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">j</span><span class="o">);</span>
+        <span class="kd">final</span> <span class="kt">int</span> <span class="n">sizej</span> <span class="o">=</span> <span class="o">(</span><span class="n">idsj</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">?</span> <span class="mi">1</span> <span class="o">:</span> <span class="n">idsj</span><span class="o">.</span><span class="na">size</span><span class="o">();</span>
+        <span class="n">scratch</span><span class="o">[</span><span class="n">ybase</span> <span class="o">+</span> <span class="n">j</span><span class="o">]</span> <span class="o">=</span> <span class="n">linkage</span><span class="o">.</span><span class="na">combine</span><span class="o">(</span>
+          <span class="n">sizex</span><span class="o">,</span> <span class="n">scratch</span><span class="o">[</span><span class="n">xbase</span> <span class="o">+</span> <span class="n">j</span><span class="o">],</span>
+          <span class="n">sizey</span><span class="o">,</span> <span class="n">scratch</span><span class="o">[</span><span class="n">ybase</span> <span class="o">+</span> <span class="n">j</span><span class="o">],</span> <span class="n">sizej</span><span class="o">,</span> <span class="n">min</span><span class="o">);</span>
+      <span class="o">}</span>
+      <span class="c1">// Write to (j, y), with y &lt; j &lt; x</span>
+      <span class="k">for</span><span class="o">(</span><span class="kt">int</span> <span class="n">j</span> <span class="o">=</span> <span class="n">miny</span> <span class="o">+</span> <span class="mi">1</span><span class="o">;</span> <span class="n">j</span> <span class="o">&lt;</span> <span class="n">minx</span><span class="o">;</span> <span class="n">j</span><span class="o">++)</span> <span class="o">{</span>
+        <span class="k">if</span><span class="o">(</span><span class="n">height</span><span class="o">[</span><span class="n">j</span><span class="o">]</span> <span class="o">&lt;</span> <span class="nc">Double</span><span class="o">.</span><span class="na">POSITIVE_INFINITY</span><span class="o">)</span> <span class="k">continue</span><span class="o">;</span>
+        <span class="kd">final</span> <span class="kt">int</span> <span class="n">jbase</span> <span class="o">=</span> <span class="n">triangleSize</span><span class="o">(</span><span class="n">j</span><span class="o">);</span>
+        <span class="kd">final</span> <span class="nc">DBIDs</span> <span class="n">idsj</span> <span class="o">=</span> <span class="n">clusters</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">j</span><span class="o">);</span>
+        <span class="kd">final</span> <span class="kt">int</span> <span class="n">sizej</span> <span class="o">=</span> <span class="o">(</span><span class="n">idsj</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">?</span> <span class="mi">1</span> <span class="o">:</span> <span class="n">idsj</span><span class="o">.</span><span class="na">size</span><span class="o">();</span>
+        <span class="n">scratch</span><span class="o">[</span><span class="n">jbase</span> <span class="o">+</span> <span class="n">miny</span><span class="o">]</span> <span class="o">=</span> <span class="n">linkage</span><span class="o">.</span><span class="na">combine</span><span class="o">(</span>
+          <span class="n">sizex</span><span class="o">,</span> <span class="n">scratch</span><span class="o">[</span><span class="n">xbase</span> <span class="o">+</span> <span class="n">j</span><span class="o">],</span>
+          <span class="n">sizey</span><span class="o">,</span> <span class="n">scratch</span><span class="o">[</span><span class="n">jbase</span> <span class="o">+</span> <span class="n">miny</span><span class="o">],</span> <span class="n">sizej</span><span class="o">,</span> <span class="n">min</span><span class="o">);</span>
+      <span class="o">}</span>
+      <span class="c1">// Write to (j, y), with y &lt; x &lt; j</span>
+      <span class="k">for</span><span class="o">(</span><span class="kt">int</span> <span class="n">j</span> <span class="o">=</span> <span class="n">minx</span> <span class="o">+</span> <span class="mi">1</span><span class="o">;</span> <span class="n">j</span> <span class="o">&lt;</span> <span class="n">size</span><span class="o">;</span> <span class="n">j</span><span class="o">++)</span> <span class="o">{</span>
+        <span class="k">if</span><span class="o">(</span><span class="n">height</span><span class="o">[</span><span class="n">j</span><span class="o">]</span> <span class="o">&lt;</span> <span class="nc">Double</span><span class="o">.</span><span class="na">POSITIVE_INFINITY</span><span class="o">)</span> <span class="k">continue</span><span class="o">;</span>
+        <span class="kd">final</span> <span class="nc">DBIDs</span> <span class="n">idsj</span> <span class="o">=</span> <span class="n">clusters</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">j</span><span class="o">);</span>
+        <span class="kd">final</span> <span class="kt">int</span> <span class="n">sizej</span> <span class="o">=</span> <span class="o">(</span><span class="n">idsj</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">?</span> <span class="mi">1</span> <span class="o">:</span> <span class="n">idsj</span><span class="o">.</span><span class="na">size</span><span class="o">();</span>
+        <span class="kd">final</span> <span class="kt">int</span> <span class="n">jbase</span> <span class="o">=</span> <span class="n">triangleSize</span><span class="o">(</span><span class="n">j</span><span class="o">);</span>
+        <span class="n">scratch</span><span class="o">[</span><span class="n">jbase</span> <span class="o">+</span> <span class="n">miny</span><span class="o">]</span> <span class="o">=</span> <span class="n">linkage</span><span class="o">.</span><span class="na">combine</span><span class="o">(</span>
+          <span class="n">sizex</span><span class="o">,</span> <span class="n">scratch</span><span class="o">[</span><span class="n">jbase</span> <span class="o">+</span> <span class="n">minx</span><span class="o">],</span> <span class="n">sizey</span><span class="o">,</span>
+          <span class="n">scratch</span><span class="o">[</span><span class="n">jbase</span> <span class="o">+</span> <span class="n">miny</span><span class="o">],</span> <span class="n">sizej</span><span class="o">,</span> <span class="n">min</span><span class="o">);</span>
+      <span class="o">}</span></code></pre></figure>
+<p>Note the calls to <code class="language-plaintext highlighter-rouge">linkage.combine</code>, and the added code to compute <code class="language-plaintext highlighter-rouge">sizej</code> (again with an added handling for singleton clusters). We don’t use this value yet, but it will be used by Ward, for example.</p>
+<h3 id="updating-the-constructor-and-parameterizer">Updating the Constructor and Parameterizer</h3>
+<p>In order to choose the linkage, we need to update the constructor and <code class="language-plaintext highlighter-rouge">Parameterizer</code>:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="kd">public</span> <span class="nf">NaiveAgglomerativeHierarchicalClustering</span><span class="o">(</span>
+        <span class="nc">DistanceFunction</span><span class="o">&lt;?</span> <span class="kd">super</span> <span class="no">O</span><span class="o">&gt;</span> <span class="n">distanceFunction</span><span class="o">,</span>
+        <span class="kt">int</span> <span class="n">numclusters</span><span class="o">,</span> <span class="nc">Linkage</span> <span class="n">linkage</span><span class="o">)</span> <span class="o">{</span>
+    <span class="kd">super</span><span class="o">(</span><span class="n">distanceFunction</span><span class="o">);</span>
+    <span class="k">this</span><span class="o">.</span><span class="na">numclusters</span> <span class="o">=</span> <span class="n">numclusters</span><span class="o">;</span>
+    <span class="k">this</span><span class="o">.</span><span class="na">linkage</span> <span class="o">=</span> <span class="n">linkage</span><span class="o">;</span>
+  <span class="o">}</span></code></pre></figure>
+<p>For the Parameterizer, we need to add a new <a href="/releases/current/doc/de/lmu/ifi/dbs/elki/utilities/optionhandling/OptionID.html">OptionID</a>, and for an enum we can use the convenient <a href="/releases/current/doc/de/lmu/ifi/dbs/elki/utilities/optionhandling/parameters/EnumParameter.html">EnumParameter</a>, which will produce a dropdown menu. We’ll set the default to Ward linkage, although we have not yet implemented it in the tutorial.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="kd">public</span> <span class="kd">static</span> <span class="kd">final</span> <span class="nc">OptionID</span> <span class="no">LINKAGE_ID</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">OptionID</span><span class="o">(</span>
+      <span class="s">"hierarchical.linkage"</span><span class="o">,</span>
+      <span class="s">"Parameter to choose the linkage strategy."</span><span class="o">);</span>
+
+    <span class="kd">protected</span> <span class="nc">Linkage</span> <span class="n">linkage</span> <span class="o">=</span> <span class="nc">Linkage</span><span class="o">.</span><span class="na">SINGLE</span><span class="o">;</span>
+
+    <span class="nd">@Override</span>
+    <span class="kd">protected</span> <span class="kt">void</span> <span class="nf">makeOptions</span><span class="o">(</span><span class="nc">Parameterization</span> <span class="n">config</span><span class="o">)</span> <span class="o">{</span>
+      <span class="kd">super</span><span class="o">.</span><span class="na">makeOptions</span><span class="o">(</span><span class="n">config</span><span class="o">);</span>
+      <span class="nc">IntParameter</span> <span class="n">numclustersP</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">IntParameter</span><span class="o">(</span><span class="nc">CutDendrogramByNumberOfClusters</span><span class="o">.</span><span class="na">Parameterizer</span><span class="o">.</span><span class="na">MINCLUSTERS_ID</span><span class="o">)</span> <span class="c1">//</span>
+          <span class="o">.</span><span class="na">addConstraint</span><span class="o">(</span><span class="nc">CommonConstraints</span><span class="o">.</span><span class="na">GREATER_EQUAL_ONE_INT</span><span class="o">);</span>
+      <span class="k">if</span><span class="o">(</span><span class="n">config</span><span class="o">.</span><span class="na">grab</span><span class="o">(</span><span class="n">numclustersP</span><span class="o">))</span> <span class="o">{</span>
+        <span class="n">numclusters</span> <span class="o">=</span> <span class="n">numclustersP</span><span class="o">.</span><span class="na">intValue</span><span class="o">();</span>
+      <span class="o">}</span>
+
+      <span class="nc">EnumParameter</span><span class="o">&lt;</span><span class="nc">Linkage</span><span class="o">&gt;</span> <span class="n">linkageP</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">EnumParameter</span><span class="o">&lt;&gt;(</span><span class="no">LINKAGE_ID</span><span class="o">,</span> <span class="nc">Linkage</span><span class="o">.</span><span class="na">class</span><span class="o">)</span> <span class="c1">//</span>
+          <span class="o">.</span><span class="na">setDefaultValue</span><span class="o">(</span><span class="nc">Linkage</span><span class="o">.</span><span class="na">WARD</span><span class="o">);</span>
+      <span class="k">if</span><span class="o">(</span><span class="n">config</span><span class="o">.</span><span class="na">grab</span><span class="o">(</span><span class="n">linkageP</span><span class="o">))</span> <span class="o">{</span>
+        <span class="n">linkage</span> <span class="o">=</span> <span class="n">linkageP</span><span class="o">.</span><span class="na">getValue</span><span class="o">();</span>
+      <span class="o">}</span>
+    <span class="o">}</span>
+
+    <span class="nd">@Override</span>
+    <span class="kd">protected</span> <span class="nc">NaiveAgglomerativeHierarchicalClustering3</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span> <span class="nf">makeInstance</span><span class="o">()</span> <span class="o">{</span>
+      <span class="k">return</span> <span class="k">new</span> <span class="nc">NaiveAgglomerativeHierarchicalClustering3</span><span class="o">&lt;&gt;(</span><span class="n">distanceFunction</span><span class="o">,</span> <span class="n">numclusters</span><span class="o">,</span> <span class="n">linkage</span><span class="o">);</span>
+    <span class="o">}</span></code></pre></figure>
+<p>Now (if we leave out the “WARD” line for now) we should be able to run the clustering algorithm with complete linkage.</p>
+<p>With complete linkage, the outliers in the mouse data set will no longer produce singleton clusters. The overall result is still not too good on this data set:</p>
+<p><img src="/tutorial/mouse-complete.png" alt="" /></p>
+<h3 id="adding-additional-linkage-strategies-1">Adding Additional Linkage Strategies</h3>
+<p>Additional linkage strategies can now be added simply be adding them to the enum and implementing the <code class="language-plaintext highlighter-rouge">combine</code> function adequately.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="no">GROUP_AVERAGE</span> <span class="o">{</span>
+      <span class="nd">@Override</span>
+      <span class="kd">public</span> <span class="kt">double</span> <span class="nf">combine</span><span class="o">(</span><span class="kt">int</span> <span class="n">sizex</span><span class="o">,</span> <span class="kt">double</span> <span class="n">dx</span><span class="o">,</span> <span class="kt">int</span> <span class="n">sizey</span><span class="o">,</span> <span class="kt">double</span> <span class="n">dy</span><span class="o">,</span> <span class="kt">int</span> <span class="n">sizej</span><span class="o">,</span> <span class="kt">double</span> <span class="n">dxy</span><span class="o">)</span> <span class="o">{</span>
+        <span class="kd">final</span> <span class="kt">double</span> <span class="n">wx</span> <span class="o">=</span> <span class="n">sizex</span> <span class="o">/</span> <span class="o">(</span><span class="kt">double</span><span class="o">)</span> <span class="o">(</span><span class="n">sizex</span> <span class="o">+</span> <span class="n">sizey</span><span class="o">);</span>
+        <span class="kd">final</span> <span class="kt">double</span> <span class="n">wy</span> <span class="o">=</span> <span class="n">sizey</span> <span class="o">/</span> <span class="o">(</span><span class="kt">double</span><span class="o">)</span> <span class="o">(</span><span class="n">sizex</span> <span class="o">+</span> <span class="n">sizey</span><span class="o">);</span>
+        <span class="k">return</span> <span class="n">wx</span> <span class="o">*</span> <span class="n">dx</span> <span class="o">+</span> <span class="n">wy</span> <span class="o">*</span> <span class="n">dy</span><span class="o">;</span>
+      <span class="o">}</span>
+    <span class="o">},</span>
+    <span class="no">WEIGHTED_AVERAGE</span> <span class="o">{</span>
+      <span class="nd">@Override</span>
+      <span class="kd">public</span> <span class="kt">double</span> <span class="nf">combine</span><span class="o">(</span><span class="kt">int</span> <span class="n">sizex</span><span class="o">,</span> <span class="kt">double</span> <span class="n">dx</span><span class="o">,</span> <span class="kt">int</span> <span class="n">sizey</span><span class="o">,</span> <span class="kt">double</span> <span class="n">dy</span><span class="o">,</span> <span class="kt">int</span> <span class="n">sizej</span><span class="o">,</span> <span class="kt">double</span> <span class="n">dxy</span><span class="o">)</span> <span class="o">{</span>
+        <span class="k">return</span> <span class="o">.</span><span class="mi">5</span> <span class="o">*</span> <span class="o">(</span><span class="n">dx</span> <span class="o">+</span> <span class="n">dy</span><span class="o">);</span>
+      <span class="o">}</span>
+    <span class="o">},</span>
+    <span class="no">CENTROID</span> <span class="o">{</span>
+      <span class="nd">@Override</span>
+      <span class="kd">public</span> <span class="kt">double</span> <span class="nf">combine</span><span class="o">(</span><span class="kt">int</span> <span class="n">sizex</span><span class="o">,</span> <span class="kt">double</span> <span class="n">dx</span><span class="o">,</span> <span class="kt">int</span> <span class="n">sizey</span><span class="o">,</span> <span class="kt">double</span> <span class="n">dy</span><span class="o">,</span> <span class="kt">int</span> <span class="n">sizej</span><span class="o">,</span> <span class="kt">double</span> <span class="n">dxy</span><span class="o">)</span> <span class="o">{</span>
+        <span class="kd">final</span> <span class="kt">double</span> <span class="n">wx</span> <span class="o">=</span> <span class="n">sizex</span> <span class="o">/</span> <span class="o">(</span><span class="kt">double</span><span class="o">)</span> <span class="o">(</span><span class="n">sizex</span> <span class="o">+</span> <span class="n">sizey</span><span class="o">);</span>
+        <span class="kd">final</span> <span class="kt">double</span> <span class="n">wy</span> <span class="o">=</span> <span class="n">sizey</span> <span class="o">/</span> <span class="o">(</span><span class="kt">double</span><span class="o">)</span> <span class="o">(</span><span class="n">sizex</span> <span class="o">+</span> <span class="n">sizey</span><span class="o">);</span>
+        <span class="kd">final</span> <span class="kt">double</span> <span class="n">beta</span> <span class="o">=</span> <span class="o">(</span><span class="n">sizex</span> <span class="o">*</span> <span class="n">sizey</span><span class="o">)</span> <span class="o">/</span> <span class="o">(</span><span class="kt">double</span><span class="o">)</span> <span class="o">((</span><span class="n">sizex</span> <span class="o">+</span> <span class="n">sizey</span><span class="o">)</span> <span class="o">*</span> <span class="o">(</span><span class="n">sizex</span> <span class="o">+</span> <span class="n">sizey</span><span class="o">));</span>
+        <span class="k">return</span> <span class="n">wx</span> <span class="o">*</span> <span class="n">dx</span> <span class="o">+</span> <span class="n">wy</span> <span class="o">*</span> <span class="n">dy</span> <span class="o">-</span> <span class="n">beta</span> <span class="o">*</span> <span class="n">dxy</span><span class="o">;</span>
+      <span class="o">}</span>
+    <span class="o">},</span>
+    <span class="no">MEDIAN</span> <span class="o">{</span>
+      <span class="nd">@Override</span>
+      <span class="kd">public</span> <span class="kt">double</span> <span class="nf">combine</span><span class="o">(</span><span class="kt">int</span> <span class="n">sizex</span><span class="o">,</span> <span class="kt">double</span> <span class="n">dx</span><span class="o">,</span> <span class="kt">int</span> <span class="n">sizey</span><span class="o">,</span> <span class="kt">double</span> <span class="n">dy</span><span class="o">,</span> <span class="kt">int</span> <span class="n">sizej</span><span class="o">,</span> <span class="kt">double</span> <span class="n">dxy</span><span class="o">)</span> <span class="o">{</span>
+        <span class="k">return</span> <span class="o">.</span><span class="mi">5</span> <span class="o">*</span> <span class="o">(</span><span class="n">dx</span> <span class="o">+</span> <span class="n">dy</span><span class="o">)</span> <span class="o">-</span> <span class="o">.</span><span class="mi">25</span> <span class="o">*</span> <span class="n">dxy</span><span class="o">;</span>
+      <span class="o">}</span>
+    <span class="o">},</span>
+    <span class="no">WARD</span> <span class="o">{</span>
+      <span class="nd">@Override</span>
+      <span class="kd">public</span> <span class="kt">double</span> <span class="nf">combine</span><span class="o">(</span><span class="kt">int</span> <span class="n">sizex</span><span class="o">,</span> <span class="kt">double</span> <span class="n">dx</span><span class="o">,</span> <span class="kt">int</span> <span class="n">sizey</span><span class="o">,</span> <span class="kt">double</span> <span class="n">dy</span><span class="o">,</span> <span class="kt">int</span> <span class="n">sizej</span><span class="o">,</span> <span class="kt">double</span> <span class="n">dxy</span><span class="o">)</span> <span class="o">{</span>
+        <span class="kd">final</span> <span class="kt">double</span> <span class="n">wx</span> <span class="o">=</span> <span class="o">(</span><span class="n">sizex</span> <span class="o">+</span> <span class="n">sizej</span><span class="o">)</span> <span class="o">/</span> <span class="o">(</span><span class="kt">double</span><span class="o">)</span> <span class="o">(</span><span class="n">sizex</span> <span class="o">+</span> <span class="n">sizey</span> <span class="o">+</span> <span class="n">sizej</span><span class="o">);</span>
+        <span class="kd">final</span> <span class="kt">double</span> <span class="n">wy</span> <span class="o">=</span> <span class="o">(</span><span class="n">sizey</span> <span class="o">+</span> <span class="n">sizej</span><span class="o">)</span> <span class="o">/</span> <span class="o">(</span><span class="kt">double</span><span class="o">)</span> <span class="o">(</span><span class="n">sizex</span> <span class="o">+</span> <span class="n">sizey</span> <span class="o">+</span> <span class="n">sizej</span><span class="o">);</span>
+        <span class="kd">final</span> <span class="kt">double</span> <span class="n">beta</span> <span class="o">=</span> <span class="n">sizej</span> <span class="o">/</span> <span class="o">(</span><span class="kt">double</span><span class="o">)</span> <span class="o">(</span><span class="n">sizex</span> <span class="o">+</span> <span class="n">sizey</span> <span class="o">+</span> <span class="n">sizej</span><span class="o">);</span>
+        <span class="k">return</span> <span class="n">wx</span> <span class="o">*</span> <span class="n">dx</span> <span class="o">+</span> <span class="n">wy</span> <span class="o">*</span> <span class="n">dy</span> <span class="o">-</span> <span class="n">beta</span> <span class="o">*</span> <span class="n">dxy</span><span class="o">;</span>
+      <span class="o">}</span>
+    <span class="o">},</span></code></pre></figure>
+<p>Note: it will be more extensible if instead of an enum, we would have used an interface and several implementations of this interface. The algorithms will be added to ELKI 0.6.0 using such an API.</p>
+<p>Ward linkage is still somewhat special: for Ward, the distance matrix should be initialized with the <em>squared</em> distances (since squared Euclidean distance equals the sum of squares). Assuming that this is the only such special case, we can do this by inserting the following fragments into the matrix initialization code:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="kt">boolean</span> <span class="n">square</span> <span class="o">=</span> <span class="nc">Linkage</span><span class="o">.</span><span class="na">WARD</span><span class="o">.</span><span class="na">equals</span><span class="o">(</span><span class="n">linkage</span><span class="o">)</span> <span class="o">&amp;&amp;</span>
+       <span class="o">!(</span><span class="nc">SquaredEuclideanDistanceFunction</span><span class="o">.</span><span class="na">class</span><span class="o">.</span><span class="na">isInstance</span><span class="o">(</span><span class="n">getDistanceFunction</span><span class="o">()));</span></code></pre></figure>
+<p>(assuming that a user that chose squared Euclidean distance meant to use it just squared once.)</p>
+<p>and then:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">        <span class="n">scratch</span><span class="o">[</span><span class="n">pos</span><span class="o">]</span> <span class="o">=</span> <span class="n">dq</span><span class="o">.</span><span class="na">distance</span><span class="o">(</span><span class="n">ix</span><span class="o">,</span> <span class="n">iy</span><span class="o">);</span>
+        <span class="c1">// Ward uses variances -- i.e. squared values</span>
+        <span class="k">if</span><span class="o">(</span><span class="n">square</span><span class="o">)</span> <span class="o">{</span>
+          <span class="n">scratch</span><span class="o">[</span><span class="n">pos</span><span class="o">]</span> <span class="o">*=</span> <span class="n">scratch</span><span class="o">[</span><span class="n">pos</span><span class="o">];</span>
+        <span class="o">}</span></code></pre></figure>
+<p>With ward linkage, the mouse data set will cluster surprisingly well:</p>
+<p><img src="/tutorial/mouse-ward.png" alt="" /></p>
+<p><a href="https://github.com/elki-project/elki/blob/master/addons/tutorial/src/main/java/tutorial/clustering/NaiveAgglomerativeHierarchicalClustering3.java">You can browse the full source code online, in the tutorial folder</a></p>
+<h2 id="improving-the-output---producing-a-hierarchy-and-a-dendrogram">Improving the output - producing a hierarchy and a dendrogram</h2>
+<p>ELKI already comes with hierarchical clustering, and by producing the same output format, we can make use of the existing tools for extracting clusters from the hierarchy, but also for visualization. The preferred format of ELKI is the representation used by the efficient SLINK algorithm, and coincidentially also what we alreday obtained above in form of the <code class="language-plaintext highlighter-rouge">parent</code> and <code class="language-plaintext highlighter-rouge">height</code> values.</p>
+<p>In order to pass these values to other classes in ELKI, we have to use the <a href="/releases/current/doc/de/lmu/ifi/dbs/elki/database/datastore/DataStore.html">DataStore</a> API. The purpose of these classes is to facilitate the storage of data by DBID - similar to a hash map. While the API looks like a hash map, the ELKI engine will for static databases actually use an array store, so at runtime this will not change a lot (unless we use dynamic database, that is).</p>
+<h3 id="using-elki-datastores">Using ELKI <code class="language-plaintext highlighter-rouge">DataStore</code>s</h3>
+<p>The new data storage initialization looks like this (note that we also no longer track the cluster membery, but the cluster sizes only!):</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="nc">WritableDBIDDataStore</span> <span class="n">parent</span> <span class="o">=</span> <span class="nc">DataStoreUtil</span><span class="o">.</span><span class="na">makeDBIDStorage</span><span class="o">(</span><span class="n">ids</span><span class="o">,</span>
+        <span class="nc">DataStoreFactory</span><span class="o">.</span><span class="na">HINT_HOT</span> <span class="o">|</span> <span class="nc">DataStoreFactory</span><span class="o">.</span><span class="na">HINT_STATIC</span><span class="o">);</span>
+    <span class="nc">WritableDoubleDataStore</span> <span class="n">height</span> <span class="o">=</span> <span class="nc">DataStoreUtil</span><span class="o">.</span><span class="na">makeDoubleStorage</span><span class="o">(</span><span class="n">ids</span><span class="o">,</span>
+        <span class="nc">DataStoreFactory</span><span class="o">.</span><span class="na">HINT_HOT</span> <span class="o">|</span> <span class="nc">DataStoreFactory</span><span class="o">.</span><span class="na">HINT_STATIC</span><span class="o">);</span>
+    <span class="nc">WritableIntegerDataStore</span> <span class="n">csize</span> <span class="o">=</span> <span class="nc">DataStoreUtil</span><span class="o">.</span><span class="na">makeIntegerStorage</span><span class="o">(</span><span class="n">ids</span><span class="o">,</span>
+        <span class="nc">DataStoreFactory</span><span class="o">.</span><span class="na">HINT_HOT</span> <span class="o">|</span> <span class="nc">DataStoreFactory</span><span class="o">.</span><span class="na">HINT_TEMP</span><span class="o">);</span>
+
+    <span class="c1">// Initialize the contents: parent(p)=p, height=+inf, size=1</span>
+    <span class="k">for</span><span class="o">(</span><span class="nc">DBIDIter</span> <span class="n">it</span> <span class="o">=</span> <span class="n">ids</span><span class="o">.</span><span class="na">iter</span><span class="o">();</span> <span class="n">it</span><span class="o">.</span><span class="na">valid</span><span class="o">();</span> <span class="n">it</span><span class="o">.</span><span class="na">advance</span><span class="o">())</span> <span class="o">{</span>
+      <span class="n">parent</span><span class="o">.</span><span class="na">put</span><span class="o">(</span><span class="n">it</span><span class="o">,</span> <span class="n">it</span><span class="o">);</span>
+      <span class="n">height</span><span class="o">.</span><span class="na">put</span><span class="o">(</span><span class="n">it</span><span class="o">,</span> <span class="nc">Double</span><span class="o">.</span><span class="na">POSITIVE_INFINITY</span><span class="o">);</span>
+      <span class="n">csize</span><span class="o">.</span><span class="na">put</span><span class="o">(</span><span class="n">it</span><span class="o">,</span> <span class="mi">1</span><span class="o">);</span>
+    <span class="o">}</span></code></pre></figure>
+<p>We could have used <code class="language-plaintext highlighter-rouge">WritableDataStore&lt;&gt;</code> in each case, but that would occur a memory management overhead. For primitive types such as IDs, double-valued distances and integer counts, these optimized APIs perform better.</p>
+<p>Note that we created the first two using <code class="language-plaintext highlighter-rouge">HINT_STATIC</code>, the last using <code class="language-plaintext highlighter-rouge">HINT_TEMP</code> (the hints are documented in <a href="/releases/current/doc/de/lmu/ifi/dbs/elki/database/datastore/DataStoreFactory.html">DataStoreFactory</a>). The reason is that we are going to pass the first two outside, but we will drop the last one. On the long run, this is supposed to help the optimizer to decide which data to write to disk.</p>
+<p>By initializing the cluster counts with <code class="language-plaintext highlighter-rouge">1</code>, we can actually drop the complex case distinction we used in the first version. The new ELKI data structures are now no longer indexed by the integer offset, but by <code class="language-plaintext highlighter-rouge">DBID</code>, so we will be using the iterators more than before.</p>
+<h3 id="further-elkification-of-the-implementation---more-iterator-usage">Further ELKIfication of the implementation - more iterator usage</h3>
+<p>The code for finding the minimum distance now becomes this:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">      <span class="kt">double</span> <span class="n">min</span> <span class="o">=</span> <span class="nc">Double</span><span class="o">.</span><span class="na">POSITIVE_INFINITY</span><span class="o">;</span>
+      <span class="kt">int</span> <span class="n">minx</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="o">,</span> <span class="n">miny</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="o">;</span>
+      <span class="k">for</span><span class="o">(</span><span class="n">ix</span><span class="o">.</span><span class="na">seek</span><span class="o">(</span><span class="mi">0</span><span class="o">);</span> <span class="n">ix</span><span class="o">.</span><span class="na">valid</span><span class="o">();</span> <span class="n">ix</span><span class="o">.</span><span class="na">advance</span><span class="o">())</span> <span class="o">{</span>
+        <span class="k">if</span><span class="o">(</span><span class="n">height</span><span class="o">.</span><span class="na">doubleValue</span><span class="o">(</span><span class="n">ix</span><span class="o">)</span> <span class="o">&lt;</span> <span class="nc">Double</span><span class="o">.</span><span class="na">POSITIVE_INFINITY</span><span class="o">)</span> <span class="o">{</span>
+          <span class="k">continue</span><span class="o">;</span>
+        <span class="o">}</span>
+        <span class="kd">final</span> <span class="kt">int</span> <span class="n">xbase</span> <span class="o">=</span> <span class="n">triangleSize</span><span class="o">(</span><span class="n">ix</span><span class="o">.</span><span class="na">getOffset</span><span class="o">());</span>
+        <span class="k">for</span><span class="o">(</span><span class="n">iy</span><span class="o">.</span><span class="na">seek</span><span class="o">(</span><span class="mi">0</span><span class="o">);</span> <span class="n">iy</span><span class="o">.</span><span class="na">getOffset</span><span class="o">()</span> <span class="o">&lt;</span> <span class="n">ix</span><span class="o">.</span><span class="na">getOffset</span><span class="o">();</span> <span class="n">iy</span><span class="o">.</span><span class="na">advance</span><span class="o">())</span> <span class="o">{</span>
+          <span class="k">if</span><span class="o">(</span><span class="n">height</span><span class="o">.</span><span class="na">doubleValue</span><span class="o">(</span><span class="n">iy</span><span class="o">)</span> <span class="o">&lt;</span> <span class="nc">Double</span><span class="o">.</span><span class="na">POSITIVE_INFINITY</span><span class="o">)</span> <span class="o">{</span>
+            <span class="k">continue</span><span class="o">;</span>
+          <span class="o">}</span>
+          <span class="kd">final</span> <span class="kt">int</span> <span class="n">idx</span> <span class="o">=</span> <span class="n">xbase</span> <span class="o">+</span> <span class="n">iy</span><span class="o">.</span><span class="na">getOffset</span><span class="o">();</span>
+          <span class="k">if</span><span class="o">(</span><span class="n">scratch</span><span class="o">[</span><span class="n">idx</span><span class="o">]</span> <span class="o">&lt;=</span> <span class="n">min</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">min</span> <span class="o">=</span> <span class="n">scratch</span><span class="o">[</span><span class="n">idx</span><span class="o">];</span>
+            <span class="n">minx</span> <span class="o">=</span> <span class="n">ix</span><span class="o">.</span><span class="na">getOffset</span><span class="o">();</span>
+            <span class="n">miny</span> <span class="o">=</span> <span class="n">iy</span><span class="o">.</span><span class="na">getOffset</span><span class="o">();</span>
+          <span class="o">}</span>
+        <span class="o">}</span>
+      <span class="o">}</span></code></pre></figure>
+<p>Note that the loops now are using the ELKI/Trove/C++ style iterators (see <a href="/releases/current/doc/de/lmu/ifi/dbs/elki/utilities/datastructures/iterator/Iter.html">Iter</a>). Since these iterators are <a href="/releases/current/doc/de/lmu/ifi/dbs/elki/utilities/datastructures/iterator/ArrayIter.html">ArrayIter</a>s, we can access their offset using <code class="language-plaintext highlighter-rouge">getOffset()</code>. For consistency with SLINK, we will find the <em>last</em> minimum instead of the first minimum now.</p>
+<p>Merging the clusters becomes simpler, as we stopped tracking the exact members, but only the cluster sizes:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">      <span class="c1">// Avoid allocating memory, by reusing existing iterators:</span>
+      <span class="n">ix</span><span class="o">.</span><span class="na">seek</span><span class="o">(</span><span class="n">minx</span><span class="o">);</span>
+      <span class="n">iy</span><span class="o">.</span><span class="na">seek</span><span class="o">(</span><span class="n">miny</span><span class="o">);</span>
+      <span class="c1">// Perform merge in data structure: x -&gt; y</span>
+      <span class="c1">// Since y &lt; x, prefer keeping y, dropping x.</span>
+      <span class="kt">int</span> <span class="n">sizex</span> <span class="o">=</span> <span class="n">csize</span><span class="o">.</span><span class="na">intValue</span><span class="o">(</span><span class="n">ix</span><span class="o">),</span> <span class="n">sizey</span> <span class="o">=</span> <span class="n">csize</span><span class="o">.</span><span class="na">intValue</span><span class="o">(</span><span class="n">iy</span><span class="o">);</span>
+      <span class="n">height</span><span class="o">.</span><span class="na">put</span><span class="o">(</span><span class="n">ix</span><span class="o">,</span> <span class="n">min</span><span class="o">);</span>
+      <span class="n">parent</span><span class="o">.</span><span class="na">put</span><span class="o">(</span><span class="n">ix</span><span class="o">,</span> <span class="n">iy</span><span class="o">);</span>
+      <span class="n">csize</span><span class="o">.</span><span class="na">put</span><span class="o">(</span><span class="n">iy</span><span class="o">,</span> <span class="n">sizex</span> <span class="o">+</span> <span class="n">sizey</span><span class="o">);</span></code></pre></figure>
+<p>The changes for updating the similariy matrix are similar: it is now more convenient to use an <code class="language-plaintext highlighter-rouge">DBIDArrayIter ij</code> to iterate, and access the offset position using <code class="language-plaintext highlighter-rouge">ij.getOffset()</code>:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">      <span class="kd">final</span> <span class="kt">int</span> <span class="n">xbase</span> <span class="o">=</span> <span class="n">triangleSize</span><span class="o">(</span><span class="n">minx</span><span class="o">),</span> <span class="n">ybase</span> <span class="o">=</span> <span class="n">triangleSize</span><span class="o">(</span><span class="n">miny</span><span class="o">);</span>
+      <span class="c1">// Write to (y, j), with j &lt; y</span>
+      <span class="k">for</span><span class="o">(</span><span class="n">ij</span><span class="o">.</span><span class="na">seek</span><span class="o">(</span><span class="mi">0</span><span class="o">);</span> <span class="n">ij</span><span class="o">.</span><span class="na">getOffset</span><span class="o">()</span> <span class="o">&lt;</span> <span class="n">miny</span><span class="o">;</span> <span class="n">ij</span><span class="o">.</span><span class="na">advance</span><span class="o">())</span> <span class="o">{</span>
+        <span class="k">if</span><span class="o">(</span><span class="n">height</span><span class="o">.</span><span class="na">doubleValue</span><span class="o">(</span><span class="n">ij</span><span class="o">)</span> <span class="o">&lt;</span> <span class="nc">Double</span><span class="o">.</span><span class="na">POSITIVE_INFINITY</span><span class="o">)</span> <span class="k">continue</span><span class="o">;</span>
+        <span class="kd">final</span> <span class="kt">int</span> <span class="n">sizej</span> <span class="o">=</span> <span class="n">csize</span><span class="o">.</span><span class="na">intValue</span><span class="o">(</span><span class="n">ij</span><span class="o">);</span>
+        <span class="n">scratch</span><span class="o">[</span><span class="n">ybase</span> <span class="o">+</span> <span class="n">ij</span><span class="o">.</span><span class="na">getOffset</span><span class="o">()]</span> <span class="o">=</span> <span class="n">linkage</span><span class="o">.</span><span class="na">combine</span><span class="o">(</span>
+          <span class="n">sizex</span><span class="o">,</span> <span class="n">scratch</span><span class="o">[</span><span class="n">xbase</span> <span class="o">+</span> <span class="n">ij</span><span class="o">.</span><span class="na">getOffset</span><span class="o">()],</span>
+          <span class="n">sizey</span><span class="o">,</span> <span class="n">scratch</span><span class="o">[</span><span class="n">ybase</span> <span class="o">+</span> <span class="n">ij</span><span class="o">.</span><span class="na">getOffset</span><span class="o">()],</span> <span class="n">sizej</span><span class="o">,</span> <span class="n">min</span><span class="o">);</span>
+      <span class="o">}</span>
+      <span class="c1">// Write to (j, y), with y &lt; j &lt; x</span>
+      <span class="k">for</span><span class="o">(</span><span class="n">ij</span><span class="o">.</span><span class="na">seek</span><span class="o">(</span><span class="n">miny</span> <span class="o">+</span> <span class="mi">1</span><span class="o">);</span> <span class="n">ij</span><span class="o">.</span><span class="na">getOffset</span><span class="o">()</span> <span class="o">&lt;</span> <span class="n">minx</span><span class="o">;</span> <span class="n">ij</span><span class="o">.</span><span class="na">advance</span><span class="o">())</span> <span class="o">{</span>
+        <span class="k">if</span><span class="o">(</span><span class="n">height</span><span class="o">.</span><span class="na">doubleValue</span><span class="o">(</span><span class="n">ij</span><span class="o">)</span> <span class="o">&lt;</span> <span class="nc">Double</span><span class="o">.</span><span class="na">POSITIVE_INFINITY</span><span class="o">)</span> <span class="k">continue</span><span class="o">;</span>
+        <span class="kd">final</span> <span class="kt">int</span> <span class="n">jbase</span> <span class="o">=</span> <span class="n">triangleSize</span><span class="o">(</span><span class="n">ij</span><span class="o">.</span><span class="na">getOffset</span><span class="o">());</span>
+        <span class="kd">final</span> <span class="kt">int</span> <span class="n">sizej</span> <span class="o">=</span> <span class="n">csize</span><span class="o">.</span><span class="na">intValue</span><span class="o">(</span><span class="n">ij</span><span class="o">);</span>
+        <span class="n">scratch</span><span class="o">[</span><span class="n">jbase</span> <span class="o">+</span> <span class="n">miny</span><span class="o">]</span> <span class="o">=</span> <span class="n">linkage</span><span class="o">.</span><span class="na">combine</span><span class="o">(</span>
+          <span class="n">sizex</span><span class="o">,</span> <span class="n">scratch</span><span class="o">[</span><span class="n">xbase</span> <span class="o">+</span> <span class="n">ij</span><span class="o">.</span><span class="na">getOffset</span><span class="o">()],</span>
+          <span class="n">sizey</span><span class="o">,</span> <span class="n">scratch</span><span class="o">[</span><span class="n">jbase</span> <span class="o">+</span> <span class="n">miny</span><span class="o">],</span> <span class="n">sizej</span><span class="o">,</span> <span class="n">min</span><span class="o">);</span>
+      <span class="o">}</span>
+      <span class="c1">// Write to (j, y), with y &lt; x &lt; j</span>
+      <span class="k">for</span><span class="o">(</span><span class="n">ij</span><span class="o">.</span><span class="na">seek</span><span class="o">(</span><span class="n">minx</span> <span class="o">+</span> <span class="mi">1</span><span class="o">);</span> <span class="n">ij</span><span class="o">.</span><span class="na">valid</span><span class="o">();</span> <span class="n">ij</span><span class="o">.</span><span class="na">advance</span><span class="o">())</span> <span class="o">{</span>
+        <span class="k">if</span><span class="o">(</span><span class="n">height</span><span class="o">.</span><span class="na">doubleValue</span><span class="o">(</span><span class="n">ij</span><span class="o">)</span> <span class="o">&lt;</span> <span class="nc">Double</span><span class="o">.</span><span class="na">POSITIVE_INFINITY</span><span class="o">)</span> <span class="k">continue</span><span class="o">;</span>
+        <span class="kd">final</span> <span class="kt">int</span> <span class="n">jbase</span> <span class="o">=</span> <span class="n">triangleSize</span><span class="o">(</span><span class="n">ij</span><span class="o">.</span><span class="na">getOffset</span><span class="o">());</span>
+        <span class="kd">final</span> <span class="kt">int</span> <span class="n">sizej</span> <span class="o">=</span> <span class="n">csize</span><span class="o">.</span><span class="na">intValue</span><span class="o">(</span><span class="n">ij</span><span class="o">);</span>
+        <span class="n">scratch</span><span class="o">[</span><span class="n">jbase</span> <span class="o">+</span> <span class="n">miny</span><span class="o">]</span> <span class="o">=</span> <span class="n">linkage</span><span class="o">.</span><span class="na">combine</span><span class="o">(</span>
+          <span class="n">sizex</span><span class="o">,</span> <span class="n">scratch</span><span class="o">[</span><span class="n">jbase</span> <span class="o">+</span> <span class="n">minx</span><span class="o">],</span>
+          <span class="n">sizey</span><span class="o">,</span> <span class="n">scratch</span><span class="o">[</span><span class="n">jbase</span> <span class="o">+</span> <span class="n">miny</span><span class="o">],</span> <span class="n">sizej</span><span class="o">,</span> <span class="n">min</span><span class="o">);</span>
+      <span class="o">}</span></code></pre></figure>
+<h3 id="implementing-the-hierarchicalclusteringalgorithm-interface">Implementing the <code class="language-plaintext highlighter-rouge">HierarchicalClusteringAlgorithm</code> interface</h3>
+<p>Instead of extracting our own <code class="language-plaintext highlighter-rouge">Clustering&lt;Model&gt;</code> result, we just return the hierarchy:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java"><span class="k">return</span> <span class="k">new</span> <span class="nc">PointerHierarchyRepresentationResult</span><span class="o">(</span><span class="n">ids</span><span class="o">,</span> <span class="n">parent</span><span class="o">,</span> <span class="n">height</span><span class="o">,</span> <span class="n">dq</span><span class="o">.</span><span class="na">getDistanceFunction</span><span class="o">().</span><span class="na">isSquared</span><span class="o">());</span></code></pre></figure>
+<p>(which obviously is substantially less code than in [#ReturningaClustering])</p>
+<p>Finally, we want our algorithm to implement the <code class="language-plaintext highlighter-rouge">HierarchicalClusteringAlgorithm</code> interface, which requires some simple changes to the parent class generics, and the return type of the run method.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java"><span class="kd">public</span> <span class="kd">class</span> <span class="nc">NaiveAgglomerativeHierarchicalClustering</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span>
+    <span class="kd">extends</span> <span class="nc">AbstractDistanceBasedAlgorithm</span><span class="o">&lt;</span><span class="no">O</span><span class="o">,</span> <span class="nc">PointerHierarchyRepresentationResult</span><span class="o">&gt;</span>
+    <span class="kd">implements</span> <span class="nc">HierarchicalClusteringAlgorithm</span> <span class="o">{</span>
+<span class="o">...</span>
+  <span class="kd">public</span> <span class="nc">PointerHierarchyRepresentationResult</span> <span class="nf">run</span><span class="o">(</span><span class="nc">Database</span> <span class="n">db</span><span class="o">,</span> <span class="nc">Relation</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span> <span class="n">relation</span><span class="o">)</span> <span class="o">{</span>
+<span class="o">...</span>
+  <span class="o">}</span></code></pre></figure>
+<p>We can now also drop the <code class="language-plaintext highlighter-rouge">numclusters</code> parameter, as we want to use the existing ELKI classes for extracting flat clusterings out of our hierarchy.</p>
+<p>We can now use this implementation in combination with <a href="/releases/current/doc/de/lmu/ifi/dbs/elki/algorithm/clustering/hierarchical/extraction/CutDendrogramByNumberOfClusters.html">CutDendrogramByNumberOfClusters</a>:</p>
+<figure class="highlight"><pre><code class="language-shell" data-lang="shell">elki <span class="nt">-dbc</span>.in mickey-mouse.csv <span class="se">\</span>
+<span class="nt">-algorithm</span> clustering.hierarchical.extraction.CutDendrogramByNumberOfClusters <span class="se">\</span>
+<span class="nt">-algorithm</span> tutorial.clustering.NaiveAgglomerativeHierarchicalClustering4 <span class="se">\</span>
+<span class="nt">-hierarchical</span>.minclusters 3 <span class="se">\</span>
+<span class="nt">-resultHandler</span> visualizer</code></pre></figure>
+<p>the resulting clusters have not changed compared to the previous output, but we now have the other strategies of extracting clusters available, too:</p>
+<p><img src="/tutorial/mouse-ward.png" alt="" /></p>
+<p>But for example, we will also get a (simple, this is a work in progress) visualization of the cluster hierarchy. We can see that the red and yellow clusters are next merged (at a distance of 17.8) into a green cluster, then this merges with the blue cluster into the full data set (violet).</p>
+<p><img src="/tutorial/hierarchy.png" alt="" /></p>
+<p><img src="/tutorial/ward-hulls.png" alt="" /></p>
+<p><a href="https://github.com/elki-project/elki/blob/master/addons/tutorial/src/main/java/tutorial/clustering/NaiveAgglomerativeHierarchicalClustering4.java">You can browse the full source code online, in the tutorial folder</a></p>
+</article>
+</div>
+<aside class="sidebar" id="nav">
+ <div class="elk"><a href="/"><img src="/img/elk200.png" alt="ELKI Data Mining"></a></div>
+ <h1><a href="/">ELKI&nbsp;Data&nbsp;Mining</a></h1>
+ <nav>
+    <a class="item" href="/releases/">Releases</a>
+    <a class="item" href="/license">AGPLv3 License</a>
+    <a class="item" href="/howto/">How To Do ...</a>
+    <a class="item" href="/dev/">Development</a>
+    <a class="item" href="/tutorial/">Tutorials</a>
+      <a class="subitem" href="/tutorial/distance_functions">Custom Distance</a>
+      <a class="subitem" href="/tutorial/outlier">Outlier Detection</a>
+      <a class="subitem" href="/tutorial/same-size_k_means">Same-Size K-Means</a>
+      <a class="subitem active" href="/tutorial/hierarchical_clustering">Implementing HAC</a>
+      <a class="subitem" href="/tutorial/result_handler">Result Handlers</a>
+      <a class="subitem" href="/tutorial/spatial_distance_functions">Spatial Distance Functions</a>
+      <a class="subitem" href="/tutorial/outlier_ODIN">Implementing ODIN</a>
+      <a class="subitem" href="/tutorial/cfsfdp">Implementing CFSFDP</a>
+    <a class="item" href="/algorithms/">Algorithms</a>
+    <a class="item" href="/examples/">Examples</a>
+    <a class="item" href="/faq">FAQ</a>
+    <a class="item" href="/datasets/">Data sets</a>
+    <a class="item" href="/benchmarking">Benchmarking</a>
+    <a class="item" href="/publications">Publications</a>
+    <a class="item" href="/team">ELKI Team</a>
+    <span class="item" style="margin-top: 1em"><a href="https://github.com/elki-project/elki"><span class="icon icon--github"><svg viewBox="0 0 16 16"><path fill="#828282" d="M7.999,0.431c-4.285,0-7.76,3.474-7.76,7.761 c0,3.428,2.223,6.337,5.307,7.363c0.388,0.071,0.53-0.168,0.53-0.374c0-0.184-0.007-0.672-0.01-1.32 c-2.159,0.469-2.614-1.04-2.614-1.04c-0.353-0.896-0.862-1.135-0.862-1.135c-0.705-0.481,0.053-0.472,0.053-0.472 c0.779,0.055,1.189,0.8,1.189,0.8c0.692,1.186,1.816,0.843,2.258,0.645c0.071-0.502,0.271-0.843,0.493-1.037 C4.86,11.425,3.049,10.76,3.049,7.786c0-0.847,0.302-1.54,0.799-2.082C3.768,5.507,3.501,4.718,3.924,3.65 c0,0,0.652-0.209,2.134,0.796C6.677,4.273,7.34,4.187,8,4.184c0.659,0.003,1.323,0.089,1.943,0.261 c1.482-1.004,2.132-0.796,2.132-0.796c0.423,1.068,0.157,1.857,0.077,2.054c0.497,0.542,0.798,1.235,0.798,2.082 c0,2.981-1.814,3.637-3.543,3.829c0.279,0.24,0.527,0.713,0.527,1.437c0,1.037-0.01,1.874-0.01,2.129 c0,0.208,0.14,0.449,0.534,0.373c3.081-1.028,5.302-3.935,5.302-7.362C15.76,3.906,12.285,0.431,7.999,0.431z"/></svg>
+</span> elki-project</a> on GitHub</span>
+ </nav>
+  <a href="#nav" class="navelk"><img src="/img/elk200.png" alt="Go to navigation"></a>
+</aside>
+<script src="/js/maillink.js" type="text/javascript"></script>
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-87792924-1"></script>
+<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);};if(!window['ga-disable-UA-87792924-1']){gtag('js',new Date());gtag('config','UA-87792924-1',{'anonymize_ip':true})}</script>
+</body>
+</html>

@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html>
+<head>
+ <meta charset="utf-8">
+ <title>ELKI Tutorials</title>
+ <meta name="description" content="Open-Source Data Mining with Java.">
+ <meta http-equiv="X-UA-Compatible" content="IE=edge">
+ <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/css/main.css">
+<link href="//fonts.googleapis.com/css?family=Inconsolata%7CSource+Sans+Pro" rel="stylesheet">
+<link rel="canonical" href="http://elki-project.github.io/tutorial/">
+<link rel="shortcut icon" href="/img/favicon.png" type="image/png">
+<link rel="stylesheet" type="text/css" href="//cdnjs.cloudflare.com/ajax/libs/cookieconsent2/3.0.3/cookieconsent.min.css" />
+  <script src="//cdnjs.cloudflare.com/ajax/libs/cookieconsent2/3.0.3/cookieconsent.min.js"></script>
+  <script>window["denyCookies"]=function(b){window["ga-disable-UA-87792924-1"]=b;}
+window.addEventListener("load",function(){window.cookieconsent.initialise({palette:{popup:{background:"#edeff5",text:"#838391"},button:{background:"#4b81e8"}},theme:"classic",type:"opt-out",content:{message:"This website uses Google Analytics cookies to ensure you get the best experience on our website, and is hosted on GitHub servers outside of our control.",link:"GitHub privacy statement",href:"https://help.github.com/articles/github-privacy-statement/",deny:"Disable Google Analytics"},onInitialise:function(status){window.denyCookies(!this.hasConsented());},onStatusChange:function(status,chosenBefore){window.denyCookies(!this.hasConsented());}})});</script>
+</head>
+<body>
+<div class="content">
+ <article class="post">
+<h1 id="elki-tutorials">ELKI Tutorials</h1>
+<p>The <a href="#basic-usage-example">tutorial below</a> explains a basic use of ELKI, how to use the MiniGUI and the visualizations.</p>
+<p>There are additional tutorials available for <em>developing</em> with ELKI.</p>
+<p>Tutorials for ELKI <em>development</em>:</p>
+<ul>
+ <li><a href="/tutorial/distance_functions">Implementing a custom distance function</a>, a variable exponent Minkowski-norm</li>
+ <li><a href="/tutorial/outlier">Implementing a new outlier detection algorithm</a>, using the distances standard deviation</li>
+ <li><a href="/tutorial/same-size_k_means">Implementing a k-means clustering variant</a>, producing clusters of the same size</li>
+ <li><a href="/tutorial/hierarchical_clustering">Implementing hierarchical clustering</a>, refining the implementation to improve performance and allow other linkage methods</li>
+ <li><a href="/tutorial/spatial_distance_functions">Implementing an index accelerated distance function</a> for R-tree and similar indexes.</li>
+ <li><a href="/tutorial/outlier_ODIN">Implementing the kNN graph based outlier detection method ODIN</a> (with automatic index acceleration).</li>
+ <li><a href="/tutorial/result_handler">Implementing a custom output format using the result handler API</a>.</li>
+ <li>(more to come …)</li>
+</ul>
+<p>Also see the <a href="/howto">HowTo</a> and <a href="/examples">Examples</a> section, which covers more topics, but in less detail.</p>
+<h1 id="basic-usage-example">Basic Usage Example</h1>
+<p>This tutorial uses <a href="/releases">Release 0.7.5</a> of ELKI.</p>
+<p>We analyze the <a href="https://raw.githubusercontent.com/elki-project/elki/master/data/synthetic/Vorlesung/mouse.csv">“mouse” data set (CSV)</a> you can find on the <a href="/datasets">DataSets</a> page.</p>
+<p>You should have the files “<code class="language-plaintext highlighter-rouge">elki-bundle-0.7.5.jar</code>” and “<code class="language-plaintext highlighter-rouge">mouse.csv</code>”.</p>
+<h2 id="running-elki">Running ELKI</h2>
+<p>The simplest way is to just run the jar file, either by double-clicking it or by typing “<code class="language-plaintext highlighter-rouge">java -jar elki.jar</code>”. This will bring an automatically generated graphical UI similar to this:</p>
+<p><img src="/tutorial/tutorial0.7.5/tutorial-01-start.png" alt="" /></p>
+<p>At the very top, you can select the task. The default task is called <code class="language-plaintext highlighter-rouge">KDDCLIApplication</code>, meaning that we build parameters for a
+KDD (Knowledge Discovery in Databases) process that can be run by out command line interface (CLI), too.
+You can also choose experiments and some utility functions here, for example the task to precompute a distance matrix and write it to a file.</p>
+<p>Below this, you have a tabular view of parameters. This table is <em>updated dynamically</em>, so do not be surprised if new options appear as you make choices.
+Third, there is a text entry to save the current parameters, and to load previous parameters by name.
+The lower text box is read only, and represents a <em>serialized</em> list of the current parameters, useful for copying this into
+a shell script, Makefile, or similar, in order to automate experiments. Last, there follows a log window (which may also contain some progress bars).</p>
+<h3 id="parameter-table">Parameter Table</h3>
+<p>The parameter table will dynamically change as you set parameters, since for example adding an algorithm adds new parameters only applicable to this particular algorithm. The colors encode important information on the paranmeters: green parameters are <em>optional</em>, grey parameters have a <em>default value</em>, while orange parameters are <em>missing</em> before the algorithm can be run.</p>
+<p>Starting the GUI will generally result in two errors due to missing parameters: you have to choose at least an <em>input file</em> (the parameter <code class="language-plaintext highlighter-rouge">dbc.in</code>) and an algorithm (parameter <code class="language-plaintext highlighter-rouge">algorithm</code>).
+Often the table edit has input assistance such as a file chooser or a dropdown to select amongst known values for this parameter
+that will become available if you select the input cell.</p>
+<h3 id="settings-manager">Settings Manager</h3>
+<p>In order to save a setting for later use, type a new name into the dropdown on the left and click on “Save”. To load a setting, choose it from the drop down and click on “Load”.</p>
+<p>Settings are saved in the file <code class="language-plaintext highlighter-rouge">MiniGUI-saved-settings.txt</code> that you should find easily editable with any text editor. Individual entries are separated with an empty line, and the first line of each section is the title of the setting, while the remaining lines give the options. The syntax is that of the ELKI command line interface, for easy batch operation.</p>
+<h3 id="log-window">Log Window</h3>
+<p>The log window will provide you with progress information (when you set <code class="language-plaintext highlighter-rouge">verbose</code> to true) and other status messages. When the “Run Task” button is grey, you probably have not yet set all required parameters. The log window will report any parameterization errors along with some suggestions on how to set the parameters. In the screenshot above, it gives a list of known algorithms to help you set the <code class="language-plaintext highlighter-rouge">algorithm</code> parameter.</p>
+<h2 id="analyzing-the-mouse-data-set">Analyzing the “mouse” Data Set</h2>
+<p>We will analyze the mouse data set with two well-known algorithms, <a href="http://en.wikipedia.org/wiki/K-means_clustering">k-means-clustering</a> and <a href="http://en.wikipedia.org/wiki/Expectation-maximization_algorithm">EM clustering</a>. This data set is a simple to understand example to see a key difference between these two algorithms.</p>
+<p>First of all, we set the <code class="language-plaintext highlighter-rouge">dbc.in</code> parameter to the input file, <code class="language-plaintext highlighter-rouge">mouse.csv</code>. Click on the right hand side of the orange highlighted (missing) <code class="language-plaintext highlighter-rouge">dbc.in</code> parameter.</p>
+<p><img src="/tutorial/tutorial0.7.5/tutorial-02-load.png" alt="" /></p>
+<p>At the right side of the cell, a content assist button with three dots <kbd>...</kbd> appears that opens a file selector. Use this to locate the <code class="language-plaintext highlighter-rouge">mouse.csv</code> file.
+Press Enter <kbd>&#9166;</kbd> to confirm (or click a different row), and the row should turn white now.</p>
+<p>Next, we choose the <code class="language-plaintext highlighter-rouge">algorithm</code> parameter. When we click the row, a similar button marked with a plus <kbd>+</kbd> appears, which opens a dropdown with known choices:</p>
+<p><img src="/tutorial/tutorial0.7.5/tutorial-03-algorithm.png" alt="" /></p>
+<h3 id="k-means-clustering">K-Means Clustering</h3>
+<p>ELKI contains many different k-Means algorithm. The standard algorithm, often attributed to Lloyd is one of the slowest. The first choice in the
+<code class="language-plaintext highlighter-rouge">clustering.kmeans</code> package (a shortened name for the Java package name <code class="language-plaintext highlighter-rouge">de.lmu.ifi.dbs.elki.algorithm.clustering.kmeans</code>) is one of the better
+algorithms, <code class="language-plaintext highlighter-rouge">KMeansSort</code>. Other good alternatives include <code class="language-plaintext highlighter-rouge">KMeansAnnulus</code> and <code class="language-plaintext highlighter-rouge">KMeansExponion</code>. Most of these will give the exact same result,
+and only differ in their run time.</p>
+<p>After choosing the k-Means algorithm and pressing Enter <kbd>&#9166;</kbd>, new options appear below.</p>
+<p>k-Means clustering requires the specification of k, the number of clusters. Set <code class="language-plaintext highlighter-rouge">kmeans.k</code> to <kbd>3</kbd>.
+The initialization parameter <code class="language-plaintext highlighter-rouge">kmeans.initialization</code> has a default value, but we would rather like to use the better <code class="language-plaintext highlighter-rouge">KMeansPlusPlusInitialMeans</code> approach.
+To always get the same result, we also fix the random generator by setting <code class="language-plaintext highlighter-rouge">kmeans.seed</code> to <kbd>0</kbd>:</p>
+<p><img src="/tutorial/tutorial0.7.5/tutorial-04-kmeans-parameters.png" alt="" /></p>
+<p>If you want, you can also enable the parameter <code class="language-plaintext highlighter-rouge">verbose</code> at the very top of the parameter table (the second <code class="language-plaintext highlighter-rouge">verbose</code> further increases verbosity).</p>
+<p>You can now run k-Means by clicking the <kbd>Run Task</kbd> button.</p>
+<h3 id="automatic-visualization">Automatic Visualization</h3>
+<p>After running the algorithm, the GUI by default opens a simple visualization window.
+The layout is automatically generated to adapt to different window sizes, so the locations of the plots can vary.
+Usually, the overview will contain one-dimensional histograms in the top left, a scatterplot matrix below
+(here, a single scatterplot is generated because the data is two dimensional,
+and the plot is moved to the right to make it larger). At the left you can see a
+<a href="https://en.wikipedia.org/wiki/Parallel_coordinates">parallel coordinates plot</a> which become more useful with higher dimensional data.
+The bar chart is an automatic quality evaluation run on the clustering, because the data set also contained labels.
+There is a key to the symbols and colors used (but all clusters are just named “Cluster” because k-means cannot infer meaningful names).</p>
+<p><img src="/tutorial/tutorial0.7.5/tutorial-05-kmeans-overview.png" alt="" /></p>
+<p>You can click some of the components to make them larger. Click on the scatterplot now.</p>
+<p>The black lines in the scatterplot were added automatically by ELKI and are the
+<a href="https://en.wikipedia.org/wiki/Voronoi_diagram">Voronoi cells</a> of the clustering.
+Click on “DoubleVector,dim=2 Scatterplot” in the menu (the first part is the data type visualized),
+and uncheck “k-means Voronoi cells” to hide this layer. Then enable “Cluster hull” instead.</p>
+<p><img src="/tutorial/tutorial0.7.5/tutorial-06-kmeans-convexhulls.png" alt="" /></p>
+<p>There are also markers that indicate the cluster means, and you can enable a “star” visualization where each point is connected to the nearest cluster mean.
+Some of these visualizations are only available on 2d data, and some are only available for k-means clustering (Voronoi cells, for example).</p>
+<p>Now you can see more clearly the non-overlapping partitioning produced by this algorithm.
+k-Means has a tendency to produce clusters of the same size, which is not appropriate for this data set.</p>
+<h3 id="em-clustering">EM-Clustering</h3>
+<p>Much more appropriate for this data set is the EM algorithm.
+Close the visualization window, and replace the value of the <code class="language-plaintext highlighter-rouge">algorithm</code> parameter with <code class="language-plaintext highlighter-rouge">clustering.em.EM</code>.
+For now make sure to <em>replace</em> the value, we don’t want to run both k-Means and EM at the same time. Again, set <code class="language-plaintext highlighter-rouge">em.k</code> to <code class="language-plaintext highlighter-rouge">3</code>, too.</p>
+<p>The evaluation scores by EM-Clustering on this data set are much better.
+This is because this data set consists mostly of three Gaussian clusters, the prime example for EM clustering.</p>
+<p>Note that an additional visualizer as automatically enabled to visualize the Gaussian clusters discovered by EM:</p>
+<p><img src="/tutorial/tutorial0.7.5/tutorial-07-em.png" alt="" /></p>
+<h2 id="exporting-results">Exporting results</h2>
+<p>The MiniGUI will by default use the result visualizer to visually display the
+results. If you want to save them to a folder, you can set the parameter
+<code class="language-plaintext highlighter-rouge">-resulthandler ResultWriter</code> to dump the clustering result into files (in a
+GNUPlot compatible CSV output format, separated with whitespace characters).</p>
+<h2 id="extending-elki">Extending ELKI</h2>
+<p>In the <a href="/tutorial/distance_functions">distance function tutorial</a> you will learn how to implement a custom distance function for ELKI, the <a href="/tutorial/outlier">outlier tutorial</a> shows how to add a new outlier detection method, the <a href="/tutorial/same-size_k_means">same-size k-Means tutorial</a> constructs a k-means variation.</p>
+</article>
+</div>
+<aside class="sidebar" id="nav">
+ <div class="elk"><a href="/"><img src="/img/elk200.png" alt="ELKI Data Mining"></a></div>
+ <h1><a href="/">ELKI&nbsp;Data&nbsp;Mining</a></h1>
+ <nav>
+    <a class="item" href="/releases/">Releases</a>
+    <a class="item" href="/license">AGPLv3 License</a>
+    <a class="item" href="/howto/">How To Do ...</a>
+    <a class="item" href="/dev/">Development</a>
+    <a class="item active" href="/tutorial/">Tutorials</a>
+      <a class="subitem" href="/tutorial/distance_functions">Custom Distance</a>
+      <a class="subitem" href="/tutorial/outlier">Outlier Detection</a>
+      <a class="subitem" href="/tutorial/same-size_k_means">Same-Size K-Means</a>
+      <a class="subitem" href="/tutorial/hierarchical_clustering">Implementing HAC</a>
+      <a class="subitem" href="/tutorial/result_handler">Result Handlers</a>
+      <a class="subitem" href="/tutorial/spatial_distance_functions">Spatial Distance Functions</a>
+      <a class="subitem" href="/tutorial/outlier_ODIN">Implementing ODIN</a>
+      <a class="subitem" href="/tutorial/cfsfdp">Implementing CFSFDP</a>
+    <a class="item" href="/algorithms/">Algorithms</a>
+    <a class="item" href="/examples/">Examples</a>
+    <a class="item" href="/faq">FAQ</a>
+    <a class="item" href="/datasets/">Data sets</a>
+    <a class="item" href="/benchmarking">Benchmarking</a>
+    <a class="item" href="/publications">Publications</a>
+    <a class="item" href="/team">ELKI Team</a>
+    <span class="item" style="margin-top: 1em"><a href="https://github.com/elki-project/elki"><span class="icon icon--github"><svg viewBox="0 0 16 16"><path fill="#828282" d="M7.999,0.431c-4.285,0-7.76,3.474-7.76,7.761 c0,3.428,2.223,6.337,5.307,7.363c0.388,0.071,0.53-0.168,0.53-0.374c0-0.184-0.007-0.672-0.01-1.32 c-2.159,0.469-2.614-1.04-2.614-1.04c-0.353-0.896-0.862-1.135-0.862-1.135c-0.705-0.481,0.053-0.472,0.053-0.472 c0.779,0.055,1.189,0.8,1.189,0.8c0.692,1.186,1.816,0.843,2.258,0.645c0.071-0.502,0.271-0.843,0.493-1.037 C4.86,11.425,3.049,10.76,3.049,7.786c0-0.847,0.302-1.54,0.799-2.082C3.768,5.507,3.501,4.718,3.924,3.65 c0,0,0.652-0.209,2.134,0.796C6.677,4.273,7.34,4.187,8,4.184c0.659,0.003,1.323,0.089,1.943,0.261 c1.482-1.004,2.132-0.796,2.132-0.796c0.423,1.068,0.157,1.857,0.077,2.054c0.497,0.542,0.798,1.235,0.798,2.082 c0,2.981-1.814,3.637-3.543,3.829c0.279,0.24,0.527,0.713,0.527,1.437c0,1.037-0.01,1.874-0.01,2.129 c0,0.208,0.14,0.449,0.534,0.373c3.081-1.028,5.302-3.935,5.302-7.362C15.76,3.906,12.285,0.431,7.999,0.431z"/></svg>
+</span> elki-project</a> on GitHub</span>
+ </nav>
+  <a href="#nav" class="navelk"><img src="/img/elk200.png" alt="Go to navigation"></a>
+</aside>
+<script src="/js/maillink.js" type="text/javascript"></script>
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-87792924-1"></script>
+<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);};if(!window['ga-disable-UA-87792924-1']){gtag('js',new Date());gtag('config','UA-87792924-1',{'anonymize_ip':true})}</script>
+</body>
+</html>

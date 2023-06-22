@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html>
+<head>
+ <meta charset="utf-8">
+ <title>Implementing Clustering by Fast Search and Find of Density Peaks</title>
+ <meta name="description" content="Open-Source Data Mining with Java.">
+ <meta http-equiv="X-UA-Compatible" content="IE=edge">
+ <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="/css/main.css">
+<link href="//fonts.googleapis.com/css?family=Inconsolata%7CSource+Sans+Pro" rel="stylesheet">
+<link rel="canonical" href="http://elki-project.github.io/tutorial/cfsfdp">
+<link rel="shortcut icon" href="/img/favicon.png" type="image/png">
+<link rel="stylesheet" type="text/css" href="//cdnjs.cloudflare.com/ajax/libs/cookieconsent2/3.0.3/cookieconsent.min.css" />
+  <script src="//cdnjs.cloudflare.com/ajax/libs/cookieconsent2/3.0.3/cookieconsent.min.js"></script>
+  <script>window["denyCookies"]=function(b){window["ga-disable-UA-87792924-1"]=b;}
+window.addEventListener("load",function(){window.cookieconsent.initialise({palette:{popup:{background:"#edeff5",text:"#838391"},button:{background:"#4b81e8"}},theme:"classic",type:"opt-out",content:{message:"This website uses Google Analytics cookies to ensure you get the best experience on our website, and is hosted on GitHub servers outside of our control.",link:"GitHub privacy statement",href:"https://help.github.com/articles/github-privacy-statement/",deny:"Disable Google Analytics"},onInitialise:function(status){window.denyCookies(!this.hasConsented());},onStatusChange:function(status,chosenBefore){window.denyCookies(!this.hasConsented());}})});</script>
+</head>
+<body>
+<div class="content">
+ <article class="post">
+<h1 id="implementing-cfsfdp">Implementing CFSFDP</h1>
+<p class="versioninfo">Version information: New tutorial for ELKI 0.8</p>
+<p>In this tutorial, we will implement the CFSFDP clustering algorithm.</p>
+<blockquote>
+ <p>Rodriguez, A., &amp; Laio, A. (2014). Clustering by fast search and find of density peaks. Science, 344(6191), 1492-1496.</p>
+</blockquote>
+<p>The first thing to do is of course to read the article and understand the
+algorithm in detail. Since the Science paper is very short on some details,
+it may also be necessary to check the supplementary material.</p>
+<p>Some key takeaways from the CFSFDP method:</p>
+<ul>
+ <li>it is distance-based, estimating density from neighborhood sizes</li>
+ <li>while it is titled “fast”, it is actually pretty slow: O(n²)</li>
+ <li>clusters are modeled by a “mode”, the point of highest density</li>
+</ul>
+<p>Note: this tutorial uses new class names and new APIs of upcoming ELKI 0.8.
+It will not apply to the previous release of ELKI.</p>
+<h2 id="code-frame">Code frame</h2>
+<p>Because CFSFDP is a clustering algorithm, we implement the
+<code class="language-plaintext highlighter-rouge">ClusteringAlgorithm</code> interface. This interface has a generic,
+which is the clustering kind returned.</p>
+<p>While in other tools such as scikit-learn, clusterers return arrays of
+integers as result, ELKI uses an object oriented approach that is also
+able to capture hierarchies of clusters - which we do not need for CFSFDP -
+and additional information on each cluster besides the cluster members.
+Because CFSFDP uses the most dense points of each clusters, the clustering
+model we chose here is a <code class="language-plaintext highlighter-rouge">SimplePrototypeModel</code>.</p>
+<p>ELKI algorithms can be used with many different data types. There is no
+reason to restrict our implementation to numeric vectors in Euclidean space.
+Instead, we will use a generic <code class="language-plaintext highlighter-rouge">O</code> (for “Object”). This will commonly be a
+vector in an Euclidean vector space, but not necessarily so.</p>
+<p>Eclipse now generates the following class for us:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java"><span class="kd">public</span> <span class="kd">class</span> <span class="nc">CFSFDP</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span> <span class="kd">implements</span>
+    <span class="nc">ClusteringAlgorithm</span><span class="o">&lt;</span><span class="nc">Clustering</span><span class="o">&lt;</span><span class="nc">SimplePrototypeModel</span><span class="o">&lt;</span><span class="no">DBID</span><span class="o">&gt;&gt;&gt;</span> <span class="o">{</span>
+  <span class="nd">@Override</span>
+  <span class="kd">public</span> <span class="nc">TypeInformation</span><span class="o">[]</span> <span class="nf">getInputTypeRestriction</span><span class="o">()</span> <span class="o">{</span>
+    <span class="c1">// TODO Auto-generated method stub</span>
+    <span class="k">return</span> <span class="kc">null</span><span class="o">;</span>
+  <span class="o">}</span>
+<span class="o">}</span></code></pre></figure>
+<p>Because the CFSFDP algorithm is distance based, we add a distance function
+field to our class. This distance needs to accept data of type <code class="language-plaintext highlighter-rouge">O</code>, but it
+may also be defined on any supertype of this, too:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="cm">/**
+   * Distance function used.
+   */</span>
+  <span class="kd">protected</span> <span class="nc">Distance</span><span class="o">&lt;?</span> <span class="kd">super</span> <span class="no">O</span><span class="o">&gt;</span> <span class="n">distance</span><span class="o">;</span></code></pre></figure>
+<p>We need our input data to satisfy this type, and we create a “run” method.
+For this, we request data that satisfies our input requirements - which happen
+to be exactly the input requirements of the distance function. With CFSFDP,
+we can cluster any data that our distance function accepts.
+Next we need to create (and this cannot be auto-generated by Eclipse,
+unfortunately) a <code class="language-plaintext highlighter-rouge">run</code> method that receives the requested relation.
+Either the user can call <code class="language-plaintext highlighter-rouge">run</code> with a data relation directly, or he can use
+<code class="language-plaintext highlighter-rouge">autorun(Database)</code> and that method will find a suitable relation in the
+database, using the information from <code class="language-plaintext highlighter-rouge">getInputTypeRestriction</code>.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="nd">@Override</span>
+  <span class="kd">public</span> <span class="nc">TypeInformation</span><span class="o">[]</span> <span class="nf">getInputTypeRestriction</span><span class="o">()</span> <span class="o">{</span>
+    <span class="k">return</span> <span class="nc">TypeUtil</span><span class="o">.</span><span class="na">array</span><span class="o">(</span><span class="n">distance</span><span class="o">.</span><span class="na">getInputTypeRestriction</span><span class="o">());</span>
+  <span class="o">}</span>
+ 
+  <span class="cm">/**
+   * Perform CFSFDP clustering.
+   * 
+   * @param relation data relation
+   * @return clustering
+   */</span>
+  <span class="kd">public</span> <span class="nc">Clustering</span><span class="o">&lt;</span><span class="nc">SimplePrototypeModel</span><span class="o">&lt;</span><span class="no">DBID</span><span class="o">&gt;&gt;</span> <span class="nf">run</span><span class="o">(</span><span class="nc">Relation</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span> <span class="n">relation</span><span class="o">)</span> <span class="o">{</span>
+    <span class="c1">// TODO</span>
+  <span class="o">}</span></code></pre></figure>
+<p>Now we can almost begin implementing CFSFDP, except that we still need
+a number of parameters. The obvious parameter is the distance cutoff <code class="language-plaintext highlighter-rouge">dc</code>.
+But this will not yet yield clusters: the authors of CFSFDP require manual
+inspection of a bivariate plot to select density peaks. This may be difficult
+to use, and users usually want a more automated approach.
+At the end of the article, the authors suggest a heuristic, which we will
+implement for this tutorial: they select the top k points based on
+<code class="language-plaintext highlighter-rouge">gamma=rho*delta</code>. Therefore, we also add a parameter k.</p>
+<p>We now add these fields and a constructor:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="cm">/**
+   * Distance cutoff.
+   */</span>
+  <span class="kd">protected</span> <span class="kt">double</span> <span class="n">dc</span><span class="o">;</span>
+  
+  <span class="cm">/**
+   * Number of clusters to find.
+   */</span>
+  <span class="kd">protected</span> <span class="kt">int</span> <span class="n">k</span><span class="o">;</span>
+
+  <span class="cm">/**
+   * Constructor.
+   *
+   * @param distance distance function
+   * @param dc distance cutoff
+   * @param k number of clusters
+   */</span>
+  <span class="kd">protected</span> <span class="nf">CFSFDP</span><span class="o">(</span><span class="nc">Distance</span><span class="o">&lt;?</span> <span class="kd">super</span> <span class="no">O</span><span class="o">&gt;</span> <span class="n">distance</span><span class="o">,</span> <span class="kt">double</span> <span class="n">dc</span><span class="o">,</span> <span class="kt">int</span> <span class="n">k</span><span class="o">)</span> <span class="o">{</span>
+    <span class="kd">super</span><span class="o">();</span>
+    <span class="k">this</span><span class="o">.</span><span class="na">distance</span> <span class="o">=</span> <span class="n">distance</span><span class="o">;</span>
+    <span class="k">this</span><span class="o">.</span><span class="na">dc</span> <span class="o">=</span> <span class="n">dc</span><span class="o">;</span>
+    <span class="k">this</span><span class="o">.</span><span class="na">k</span> <span class="o">=</span> <span class="n">k</span><span class="o">;</span>
+  <span class="o">}</span></code></pre></figure>
+<h2 id="density-estimation">Density estimation</h2>
+<p>For this kind of density estimation, we would usually employ range queries
+with a search radius of <code class="language-plaintext highlighter-rouge">dc</code>. But later CFSFDP will use a different type of
+search, and hence we get a new API of ELKI that is called a priority search,
+that can be used for both. In some cases, this search can be faster, but in
+many cases it will be slightly slower because of the more complex code (that
+hence is a bit harder to optimize by the compiler).</p>
+<p>To get a priority search, we use the <code class="language-plaintext highlighter-rouge">QueryBuilder</code> helper. This class will
+check for available data indexes to accelerate such a query, and it may
+automatically add such an index to the database (or it may decide to compute
+a pairwise distance matrix, if memory permits). We leave such decisions to
+the query optimizer of ELKI, and we just specify what we need: a priority
+search, on our data relation, for our distance query.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="nc">PrioritySearcher</span><span class="o">&lt;</span><span class="nc">DBIDRef</span><span class="o">&gt;</span> <span class="n">searcher</span> <span class="o">=</span>
+      <span class="k">new</span> <span class="nc">QueryBuilder</span><span class="o">&lt;&gt;(</span><span class="n">relation</span><span class="o">,</span> <span class="n">distance</span><span class="o">).</span><span class="na">priorityByDBID</span><span class="o">();</span></code></pre></figure>
+<p>Densities used by CFSFDP are integer values, namely the number of points
+within radius <code class="language-plaintext highlighter-rouge">dc</code>. To store the densities, we use a
+<code class="language-plaintext highlighter-rouge">WritableIntegerDataStore</code> (in many cases, ELKI will optimize this to be an
+<code class="language-plaintext highlighter-rouge">int[]</code>, but it can also be a map to integers for non-continuous database ids).
+While this is “rho” in the original paper, we use the more meaningful name
+<code class="language-plaintext highlighter-rouge">density</code> in our code.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="nc">DBIDs</span> <span class="n">ids</span> <span class="o">=</span> <span class="n">relation</span><span class="o">.</span><span class="na">getDBIDs</span><span class="o">();</span>
+    <span class="nc">WritableIntegerDataStore</span> <span class="n">density</span> <span class="o">=</span> <span class="nc">DataStoreFactory</span><span class="o">.</span><span class="na">FACTORY</span><span class="o">.</span><span class="na">makeIntegerStorage</span><span class="o">(</span>
+      <span class="n">ids</span><span class="o">,</span> <span class="nc">DataStoreFactory</span><span class="o">.</span><span class="na">HINT_HOT</span> <span class="o">|</span> <span class="nc">DataStoreFactory</span><span class="o">.</span><span class="na">HINT_TEMP</span><span class="o">);</span></code></pre></figure>
+<p>Next we iterate over all database objects (from the <code class="language-plaintext highlighter-rouge">ids</code> collection)
+and count matching neighbors. ELKI uses a special kind of iterator,
+<code class="language-plaintext highlighter-rouge">DBIDIter</code> that uses much less memory than a Java <code class="language-plaintext highlighter-rouge">Iterator&lt;DBID&gt;</code> would use.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="k">for</span><span class="o">(</span><span class="nc">DBIDIter</span> <span class="n">it</span> <span class="o">=</span> <span class="n">ids</span><span class="o">.</span><span class="na">iter</span><span class="o">();</span> <span class="n">it</span><span class="o">.</span><span class="na">valid</span><span class="o">();</span> <span class="n">it</span><span class="o">.</span><span class="na">advance</span><span class="o">())</span> <span class="o">{</span>
+      <span class="kt">int</span> <span class="n">found</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span></code></pre></figure>
+<p>For each point, we reset our search using <code class="language-plaintext highlighter-rouge">searcher.search(it, dc)</code>.
+We want to select all points with <code class="language-plaintext highlighter-rouge">searcher.computeExactDistance() &lt;= dc</code>,
+but we can perform some optimization here because <em>we do not need to know
+the exact distance here</em>:
+Some indexes have upper bounds on the distance to a point, this may allow us
+to identify true positives without computing the exact distances using
+<code class="language-plaintext highlighter-rouge">searcher.getUpperBound() &lt;= dc</code> (if there is no lower bound, the <code class="language-plaintext highlighter-rouge">NaN</code> value
+will make this expression false).
+We could also compare the lower bound, but usually this filtering is already
+performed by the searcher if we pass a cutoff value to the <code class="language-plaintext highlighter-rouge">search</code> function.
+We then store the resulting density for each point</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">      <span class="k">for</span><span class="o">(</span><span class="n">searcher</span><span class="o">.</span><span class="na">search</span><span class="o">(</span><span class="n">it</span><span class="o">,</span> <span class="n">dc</span><span class="o">);</span> <span class="n">searcher</span><span class="o">.</span><span class="na">valid</span><span class="o">();</span> <span class="n">searcher</span><span class="o">.</span><span class="na">advance</span><span class="o">())</span> <span class="o">{</span>
+        <span class="k">if</span><span class="o">(</span><span class="n">searcher</span><span class="o">.</span><span class="na">getUpperBound</span><span class="o">()</span> <span class="o">&lt;=</span> <span class="n">dc</span>
+            <span class="o">||</span> <span class="n">searcher</span><span class="o">.</span><span class="na">computeExactDistance</span><span class="o">()</span> <span class="o">&lt;=</span> <span class="n">dc</span><span class="o">)</span> <span class="o">{</span>
+          <span class="n">found</span><span class="o">++;</span>
+        <span class="o">}</span>
+      <span class="o">}</span>
+      <span class="n">density</span><span class="o">.</span><span class="na">put</span><span class="o">(</span><span class="n">it</span><span class="o">,</span> <span class="n">found</span><span class="o">);</span></code></pre></figure>
+<p>For this part, we could have used the simple range search API of ELKI instead
+(using <code class="language-plaintext highlighter-rouge">rangeByDBID()</code> to get a <code class="language-plaintext highlighter-rouge">RangeSearcher</code>), but we will need the priority
+searcher for again in the next step.</p>
+<h2 id="finding-the-nearest-denser-point">Finding the Nearest Denser Point</h2>
+<p>Next, we need to compute delta, the distance to the nearest denser point.
+Again, there is a subtle detail missing in the paper - since our densities
+are integer, we may be seeing duplicates here. The authors assumed there is
+a unique maximum, but this is not necessarily so.
+We also divert from the original paper by using positive infinity for points
+with no denser neighbors, as we do not want to have to find the largest
+distance of the entire data set (which could be expensive).</p>
+<p>For each point, we will store the distance to the next nearest point,
+and the DBID of that point. Hence we create two more data stores,
+and a temporary reference <code class="language-plaintext highlighter-rouge">var</code> and a <code class="language-plaintext highlighter-rouge">heap</code> we will discuss below.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="nc">WritableDoubleDataStore</span> <span class="n">nextdist</span> <span class="o">=</span> <span class="nc">DataStoreFactory</span><span class="o">.</span><span class="na">FACTORY</span><span class="o">.</span><span class="na">makeDoubleStorage</span><span class="o">(</span>
+      <span class="n">ids</span><span class="o">,</span> <span class="nc">DataStoreFactory</span><span class="o">.</span><span class="na">HINT_TEMP</span><span class="o">);</span>
+    <span class="nc">WritableDBIDDataStore</span> <span class="n">nextn</span> <span class="o">=</span> <span class="nc">DataStoreFactory</span><span class="o">.</span><span class="na">FACTORY</span><span class="o">.</span><span class="na">makeDBIDStorage</span><span class="o">(</span>
+      <span class="n">ids</span><span class="o">,</span> <span class="nc">DataStoreFactory</span><span class="o">.</span><span class="na">HINT_TEMP</span><span class="o">);</span>
+    <span class="nc">DBIDVar</span> <span class="n">tmp</span> <span class="o">=</span> <span class="nc">DBIDUtil</span><span class="o">.</span><span class="na">newVar</span><span class="o">();</span>
+    <span class="nc">DoubleMinHeap</span> <span class="n">heap</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">DoubleMinHeap</span><span class="o">(</span><span class="n">k</span><span class="o">);</span></code></pre></figure>
+<p>Now we can iterate over all points again, and search for the next denser point.
+This time, we do not pass the <code class="language-plaintext highlighter-rouge">dc</code> cutoff to the searcher, as we may need to
+search outside this radius. Once we have found a more dense point, we will use
+<code class="language-plaintext highlighter-rouge">searcher.decreaseCutoff</code> to reduce the search radius.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="k">for</span><span class="o">(</span><span class="nc">DBIDIter</span> <span class="n">it</span> <span class="o">=</span> <span class="n">ids</span><span class="o">.</span><span class="na">iter</span><span class="o">();</span> <span class="n">it</span><span class="o">.</span><span class="na">valid</span><span class="o">();</span> <span class="n">it</span><span class="o">.</span><span class="na">advance</span><span class="o">())</span> <span class="o">{</span>
+      <span class="kd">final</span> <span class="kt">int</span> <span class="n">dens</span> <span class="o">=</span> <span class="n">density</span><span class="o">.</span><span class="na">intValue</span><span class="o">(</span><span class="n">it</span><span class="o">);</span>
+      <span class="kt">double</span> <span class="n">dist</span> <span class="o">=</span> <span class="nc">Double</span><span class="o">.</span><span class="na">POSITIVE_INFINITY</span><span class="o">;</span>
+      <span class="n">tmp</span><span class="o">.</span><span class="na">unset</span><span class="o">();</span>
+      <span class="k">for</span><span class="o">(</span><span class="n">searcher</span><span class="o">.</span><span class="na">search</span><span class="o">(</span><span class="n">it</span><span class="o">);</span> <span class="n">searcher</span><span class="o">.</span><span class="na">valid</span><span class="o">();</span> <span class="n">searcher</span><span class="o">.</span><span class="na">advance</span><span class="o">())</span> <span class="o">{</span></code></pre></figure>
+<p>For each neighbor, we have to check whether it has a higher density, and
+keep the minimum distance each, again we can try to avoid distance computations
+by first checking the density.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">        <span class="k">if</span><span class="o">(</span><span class="n">density</span><span class="o">.</span><span class="na">intValue</span><span class="o">(</span><span class="n">searcher</span><span class="o">)</span> <span class="o">&gt;</span> <span class="n">dens</span><span class="o">)</span> <span class="o">{</span>
+          <span class="kt">double</span> <span class="n">d</span> <span class="o">=</span> <span class="n">searcher</span><span class="o">.</span><span class="na">computeExactDistance</span><span class="o">();</span>
+          <span class="k">if</span><span class="o">(</span><span class="n">d</span> <span class="o">&lt;</span> <span class="n">dist</span><span class="o">)</span> <span class="o">{</span>
+            <span class="n">dist</span> <span class="o">=</span> <span class="n">d</span><span class="o">;</span>
+            <span class="n">searcher</span><span class="o">.</span><span class="na">decreaseCutoff</span><span class="o">(</span><span class="n">d</span><span class="o">);</span>
+            <span class="n">tmp</span><span class="o">.</span><span class="na">set</span><span class="o">(</span><span class="n">searcher</span><span class="o">);</span>
+          <span class="o">}</span>
+        <span class="o">}</span></code></pre></figure>
+<p>We store the best values in the storages allocated above. To find the k largest
+values, we also maintain a heap of the k largest values.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">      <span class="n">nextdist</span><span class="o">.</span><span class="na">put</span><span class="o">(</span><span class="n">it</span><span class="o">,</span> <span class="n">dist</span><span class="o">);</span>
+      <span class="n">nextn</span><span class="o">.</span><span class="na">put</span><span class="o">(</span><span class="n">it</span><span class="o">,</span> <span class="n">tmp</span><span class="o">);</span>
+      <span class="n">heap</span><span class="o">.</span><span class="na">add</span><span class="o">(</span><span class="n">dist</span> <span class="o">*</span> <span class="n">dens</span><span class="o">,</span> <span class="n">k</span><span class="o">);</span> <span class="c1">// gamma</span></code></pre></figure>
+<h2 id="building-the-clusters">Building the Clusters</h2>
+<p>We can now construct the clusters easily by adopting a top-down approach,
+beginning with the most dense point. We first determine the threshold for
+gamma to determine the cluster modes, then we process points descending by
+density. The motivation for this is that the nearest more dense point must
+already have been processed, i.e., must already have a cluster.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="kd">final</span> <span class="kt">double</span> <span class="n">gammath</span> <span class="o">=</span> <span class="n">heap</span><span class="o">.</span><span class="na">peek</span><span class="o">();</span>
+    <span class="nc">ArrayModifiableDBIDs</span> <span class="n">sorted</span> <span class="o">=</span> <span class="nc">DBIDUtil</span><span class="o">.</span><span class="na">newArray</span><span class="o">(</span><span class="n">ids</span><span class="o">);</span>
+    <span class="n">sorted</span><span class="o">.</span><span class="na">sort</span><span class="o">(</span><span class="k">new</span> <span class="nc">DataStoreUtil</span><span class="o">.</span><span class="na">DescendingByIntegerDataStore</span><span class="o">(</span><span class="n">density</span><span class="o">));</span></code></pre></figure>
+<p>To store the resulting clustering, we create a <code class="language-plaintext highlighter-rouge">Clustering</code> object,
+and we use a temporary data store to map objects to clusters.</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="nc">WritableDataStore</span><span class="o">&lt;</span><span class="nc">ArrayModifiableDBIDs</span><span class="o">&gt;</span> <span class="n">cluster</span> <span class="o">=</span> <span class="nc">DataStoreFactory</span><span class="o">.</span><span class="na">FACTORY</span><span class="o">.</span><span class="na">makeStorage</span><span class="o">(</span><span class="n">ids</span><span class="o">,</span> <span class="nc">DataStoreFactory</span><span class="o">.</span><span class="na">HINT_TEMP</span><span class="o">,</span> <span class="nc">ArrayModifiableDBIDs</span><span class="o">.</span><span class="na">class</span><span class="o">);</span>
+    <span class="nc">Clustering</span><span class="o">&lt;</span><span class="nc">SimplePrototypeModel</span><span class="o">&lt;</span><span class="no">DBID</span><span class="o">&gt;&gt;</span> <span class="n">clustering</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">Clustering</span><span class="o">&lt;&gt;();</span></code></pre></figure>
+<p>We can now iterate over all objects (descending by density), and either
+create a new cluster for them, or add them to the cluster of their nearest
+denser neighbor. When creating a new cluster, we use the current object
+as cluster prototype:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="k">for</span><span class="o">(</span><span class="nc">DBIDIter</span> <span class="n">it</span> <span class="o">=</span> <span class="n">sorted</span><span class="o">.</span><span class="na">iter</span><span class="o">();</span> <span class="n">it</span><span class="o">.</span><span class="na">valid</span><span class="o">();</span> <span class="n">it</span><span class="o">.</span><span class="na">advance</span><span class="o">())</span> <span class="o">{</span>
+      <span class="kt">double</span> <span class="n">gamma</span> <span class="o">=</span> <span class="n">density</span><span class="o">.</span><span class="na">intValue</span><span class="o">(</span><span class="n">it</span><span class="o">)</span> <span class="o">*</span> <span class="n">nextdist</span><span class="o">.</span><span class="na">doubleValue</span><span class="o">(</span><span class="n">it</span><span class="o">);</span>
+      <span class="nc">ArrayModifiableDBIDs</span> <span class="n">c</span> <span class="o">=</span> <span class="n">gamma</span> <span class="o">&gt;=</span> <span class="n">gammath</span> <span class="o">?</span> <span class="kc">null</span> <span class="o">:</span>
+          <span class="n">cluster</span><span class="o">.</span><span class="na">get</span><span class="o">(</span><span class="n">tmp</span><span class="o">.</span><span class="na">from</span><span class="o">(</span><span class="n">nextn</span><span class="o">,</span> <span class="n">it</span><span class="o">));</span>
+      <span class="k">if</span><span class="o">(</span><span class="n">c</span> <span class="o">==</span> <span class="kc">null</span><span class="o">)</span> <span class="o">{</span>
+        <span class="n">c</span> <span class="o">=</span> <span class="nc">DBIDUtil</span><span class="o">.</span><span class="na">newArray</span><span class="o">();</span>
+        <span class="n">clustering</span><span class="o">.</span><span class="na">addToplevelCluster</span><span class="o">(</span><span class="k">new</span> <span class="nc">Cluster</span><span class="o">&lt;&gt;(</span><span class="n">c</span><span class="o">,</span>
+            <span class="k">new</span> <span class="nc">SimplePrototypeModel</span><span class="o">&lt;&gt;(</span><span class="nc">DBIDUtil</span><span class="o">.</span><span class="na">deref</span><span class="o">(</span><span class="n">it</span><span class="o">))));</span>
+      <span class="o">}</span>
+      <span class="n">c</span><span class="o">.</span><span class="na">add</span><span class="o">(</span><span class="n">it</span><span class="o">);</span>
+      <span class="n">cluster</span><span class="o">.</span><span class="na">put</span><span class="o">(</span><span class="n">it</span><span class="o">,</span> <span class="n">c</span><span class="o">);</span>
+    <span class="o">}</span>
+    <span class="k">return</span> <span class="n">clustering</span><span class="o">;</span></code></pre></figure>
+<h2 id="adding-a-parameterizer">Adding a Parameterizer</h2>
+<p>In order to make the class usable from the command line and MiniGUI, we need
+to add parameter definitions, default values, and constraints. For this we
+create an inner class named <code class="language-plaintext highlighter-rouge">Par</code> that implements the interface
+<code class="language-plaintext highlighter-rouge">Parameterizer</code>:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">  <span class="kd">public</span> <span class="kd">static</span> <span class="kd">class</span> <span class="nc">Par</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span> <span class="kd">implements</span> <span class="nc">Parameterizer</span> <span class="o">{</span>
+    <span class="nd">@Override</span>
+    <span class="kd">public</span> <span class="kt">void</span> <span class="nf">configure</span><span class="o">(</span><span class="nc">Parameterization</span> <span class="n">config</span><span class="o">)</span> <span class="o">{</span>
+      <span class="c1">// TODO: parameters</span>
+    <span class="o">}</span>
+
+    <span class="nd">@Override</span>
+    <span class="kd">public</span> <span class="no">CFSFDP</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span> <span class="nf">make</span><span class="o">()</span> <span class="o">{</span>
+      <span class="c1">// TODO: create CFSFDP instance</span>
+    <span class="o">}</span>
+  <span class="o">}</span></code></pre></figure>
+<p>We first define two (public and static) options, for <code class="language-plaintext highlighter-rouge">dc</code> and <code class="language-plaintext highlighter-rouge">k</code>
+(we are going to reuse and existing parameter name for the distance function).</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="kd">public</span> <span class="kd">static</span> <span class="kd">final</span> <span class="nc">OptionID</span> <span class="no">DC_ID</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">OptionID</span><span class="o">(</span><span class="s">"cfsfdp.dc"</span><span class="o">,</span>
+        <span class="s">"Distance cutoff for density estimation"</span><span class="o">);</span>
+    <span class="kd">public</span> <span class="kd">static</span> <span class="kd">final</span> <span class="nc">OptionID</span> <span class="no">K_ID</span> <span class="o">=</span> <span class="k">new</span> <span class="nc">OptionID</span><span class="o">(</span><span class="s">"cfsfdp.k"</span><span class="o">,</span>
+        <span class="s">"Extract the top k clusters by gamma (on ties, there may be more)."</span><span class="o">);</span></code></pre></figure>
+<p>We need three fields to hold the parameter values and implement the
+<code class="language-plaintext highlighter-rouge">make</code> method:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="kd">protected</span> <span class="nc">Distance</span><span class="o">&lt;?</span> <span class="kd">super</span> <span class="no">O</span><span class="o">&gt;</span> <span class="n">distance</span><span class="o">;</span>
+    <span class="kd">protected</span> <span class="kt">double</span> <span class="n">dc</span><span class="o">;</span>
+    <span class="kd">protected</span> <span class="kt">int</span> <span class="n">k</span><span class="o">;</span>
+
+    <span class="nd">@Override</span>
+    <span class="kd">public</span> <span class="no">CFSFDP</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;</span> <span class="nf">make</span><span class="o">()</span> <span class="o">{</span>
+      <span class="k">return</span> <span class="k">new</span> <span class="no">CFSFDP</span><span class="o">&lt;</span><span class="no">O</span><span class="o">&gt;(</span><span class="n">distance</span><span class="o">,</span> <span class="n">dc</span><span class="o">,</span> <span class="n">k</span><span class="o">);</span>
+    <span class="o">}</span></code></pre></figure>
+<p>And now we can get the parameters and map them to these fields:</p>
+<figure class="highlight"><pre><code class="language-java" data-lang="java">    <span class="kd">public</span> <span class="kt">void</span> <span class="nf">configure</span><span class="o">(</span><span class="nc">Parameterization</span> <span class="n">config</span><span class="o">)</span> <span class="o">{</span>
+      <span class="k">new</span> <span class="nc">ObjectParameter</span><span class="o">&lt;</span><span class="nc">Distance</span><span class="o">&lt;?</span> <span class="kd">super</span> <span class="no">O</span><span class="o">&gt;&gt;(</span>
+              <span class="nc">Algorithm</span><span class="o">.</span><span class="na">Utils</span><span class="o">.</span><span class="na">DISTANCE_FUNCTION_ID</span><span class="o">,</span>
+              <span class="nc">Distance</span><span class="o">.</span><span class="na">class</span><span class="o">,</span> <span class="nc">EuclideanDistance</span><span class="o">.</span><span class="na">class</span><span class="o">)</span> <span class="c1">//</span>
+          <span class="o">.</span><span class="na">grab</span><span class="o">(</span><span class="n">config</span><span class="o">,</span> <span class="n">x</span> <span class="o">-&gt;</span> <span class="n">distance</span> <span class="o">=</span> <span class="n">x</span><span class="o">);</span>
+      <span class="k">new</span> <span class="nf">DoubleParameter</span><span class="o">(</span><span class="no">DC_ID</span><span class="o">)</span> <span class="c1">//</span>
+          <span class="o">.</span><span class="na">addConstraint</span><span class="o">(</span><span class="nc">CommonConstraints</span><span class="o">.</span><span class="na">GREATER_EQUAL_ZERO_DOUBLE</span><span class="o">)</span> <span class="c1">//</span>
+          <span class="o">.</span><span class="na">grab</span><span class="o">(</span><span class="n">config</span><span class="o">,</span> <span class="n">x</span> <span class="o">-&gt;</span> <span class="n">dc</span> <span class="o">=</span> <span class="n">x</span><span class="o">);</span>
+      <span class="k">new</span> <span class="nf">IntParameter</span><span class="o">(</span><span class="no">K_ID</span><span class="o">)</span> <span class="c1">//</span>
+          <span class="o">.</span><span class="na">addConstraint</span><span class="o">(</span><span class="nc">CommonConstraints</span><span class="o">.</span><span class="na">GREATER_EQUAL_ONE_INT</span><span class="o">)</span> <span class="c1">//</span>
+          <span class="o">.</span><span class="na">grab</span><span class="o">(</span><span class="n">config</span><span class="o">,</span> <span class="n">x</span> <span class="o">-&gt;</span> <span class="n">k</span> <span class="o">=</span> <span class="n">x</span><span class="o">);</span>
+    <span class="o">}</span></code></pre></figure>
+<p>Now the algorithm should be runnable from the command line and MiniGUI.</p>
+<p>It will not yet show up in the drop-down of the packaged version, because it is not included
+in the service files. For this, we need to add the class name to the files
+<code class="language-plaintext highlighter-rouge">src/main/resources/META-INF/elki/elki.clustering.ClusteringAlgorithm</code> and
+<code class="language-plaintext highlighter-rouge">src/main/resources/META-INF/elki/elki.clustering.Algorithm</code>, since we implemented these
+two interfaces.</p>
+<p><a href="https://github.com/elki-project/elki/blob/master/addons/tutorial/src/main/java/tutorial/clustering/CFSFDP.java">You can browse the full source code online, in the tutorial folder</a>,
+or check out the
+<a href="https://github.com/elki-project/elki/blob/master/elki-clustering/src/main/java/elki/clustering/CFSFDP.java">full implementation in the clustering package</a>.</p>
+</article>
+</div>
+<aside class="sidebar" id="nav">
+ <div class="elk"><a href="/"><img src="/img/elk200.png" alt="ELKI Data Mining"></a></div>
+ <h1><a href="/">ELKI&nbsp;Data&nbsp;Mining</a></h1>
+ <nav>
+    <a class="item" href="/releases/">Releases</a>
+    <a class="item" href="/license">AGPLv3 License</a>
+    <a class="item" href="/howto/">How To Do ...</a>
+    <a class="item" href="/dev/">Development</a>
+    <a class="item" href="/tutorial/">Tutorials</a>
+      <a class="subitem" href="/tutorial/distance_functions">Custom Distance</a>
+      <a class="subitem" href="/tutorial/outlier">Outlier Detection</a>
+      <a class="subitem" href="/tutorial/same-size_k_means">Same-Size K-Means</a>
+      <a class="subitem" href="/tutorial/hierarchical_clustering">Implementing HAC</a>
+      <a class="subitem" href="/tutorial/result_handler">Result Handlers</a>
+      <a class="subitem" href="/tutorial/spatial_distance_functions">Spatial Distance Functions</a>
+      <a class="subitem" href="/tutorial/outlier_ODIN">Implementing ODIN</a>
+      <a class="subitem active" href="/tutorial/cfsfdp">Implementing CFSFDP</a>
+    <a class="item" href="/algorithms/">Algorithms</a>
+    <a class="item" href="/examples/">Examples</a>
+    <a class="item" href="/faq">FAQ</a>
+    <a class="item" href="/datasets/">Data sets</a>
+    <a class="item" href="/benchmarking">Benchmarking</a>
+    <a class="item" href="/publications">Publications</a>
+    <a class="item" href="/team">ELKI Team</a>
+    <span class="item" style="margin-top: 1em"><a href="https://github.com/elki-project/elki"><span class="icon icon--github"><svg viewBox="0 0 16 16"><path fill="#828282" d="M7.999,0.431c-4.285,0-7.76,3.474-7.76,7.761 c0,3.428,2.223,6.337,5.307,7.363c0.388,0.071,0.53-0.168,0.53-0.374c0-0.184-0.007-0.672-0.01-1.32 c-2.159,0.469-2.614-1.04-2.614-1.04c-0.353-0.896-0.862-1.135-0.862-1.135c-0.705-0.481,0.053-0.472,0.053-0.472 c0.779,0.055,1.189,0.8,1.189,0.8c0.692,1.186,1.816,0.843,2.258,0.645c0.071-0.502,0.271-0.843,0.493-1.037 C4.86,11.425,3.049,10.76,3.049,7.786c0-0.847,0.302-1.54,0.799-2.082C3.768,5.507,3.501,4.718,3.924,3.65 c0,0,0.652-0.209,2.134,0.796C6.677,4.273,7.34,4.187,8,4.184c0.659,0.003,1.323,0.089,1.943,0.261 c1.482-1.004,2.132-0.796,2.132-0.796c0.423,1.068,0.157,1.857,0.077,2.054c0.497,0.542,0.798,1.235,0.798,2.082 c0,2.981-1.814,3.637-3.543,3.829c0.279,0.24,0.527,0.713,0.527,1.437c0,1.037-0.01,1.874-0.01,2.129 c0,0.208,0.14,0.449,0.534,0.373c3.081-1.028,5.302-3.935,5.302-7.362C15.76,3.906,12.285,0.431,7.999,0.431z"/></svg>
+</span> elki-project</a> on GitHub</span>
+ </nav>
+  <a href="#nav" class="navelk"><img src="/img/elk200.png" alt="Go to navigation"></a>
+</aside>
+<script src="/js/maillink.js" type="text/javascript"></script>
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-87792924-1"></script>
+<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);};if(!window['ga-disable-UA-87792924-1']){gtag('js',new Date());gtag('config','UA-87792924-1',{'anonymize_ip':true})}</script>
+</body>
+</html>
